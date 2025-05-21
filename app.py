@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import requests
+from io import BytesIO
 import os
 import logging
 
@@ -9,140 +11,165 @@ logging.basicConfig(filename=log_file, level=logging.INFO, format='%(asctime)s -
 
 st.title("Processamento de Filiais Mais Próximas com Regras de Substituição")
 
-# Upload dos arquivos
-dist_file = st.file_uploader("Upload da base de distâncias (municipios_distanciasreais.xlsx)", type=['xlsx'])
-filial_file = st.file_uploader("Upload da base de filiais (filiais_geocodificadas.xlsx)", type=['xlsx'])
+# URLs dos arquivos no GitHub
+url_dist = "https://raw.githubusercontent.com/marfgos/ParametroColeta/main/municipios_distanciasreais.xlsx"
+url_filiais = "https://raw.githubusercontent.com/marfgos/ParametroColeta/main/filiais_geocodificadas.xlsx"
+
+def carregar_excel_github(url):
+    response = requests.get(url)
+    response.raise_for_status()
+    return pd.read_excel(BytesIO(response.content))
+
+# Upload apenas da base de parâmetros contratuais
 param_file = st.file_uploader("Upload da base de parâmetros contratuais (parametros_contrato.xlsx)", type=['xlsx'])
 
 nome_arquivo = st.text_input("Nome do arquivo Excel para salvar o resultado (sem extensão)", "resultado_final")
 
 if st.button("Processar"):
 
-    if dist_file and filial_file and param_file:
+    if param_file:
 
-        # Carregar dados
-        df_dist = pd.read_excel(dist_file)
-        df_filiais = pd.read_excel(filial_file)
-        df_grupos = pd.read_excel(param_file)
+        try:
+            # Carregar dados do GitHub
+            df_dist = carregar_excel_github(url_dist)
+            df_filiais = carregar_excel_github(url_filiais)
+            st.success("Bases de distâncias e filiais carregadas com sucesso do GitHub!")
 
-        modalidades = [
-            ("FCA", "Fracionado", "FCA/Fracionado"),
-            ("FCA", "Lotação", "FCA/Lotação"),
-            ("EXW", "Fracionado", "EXW/Fracionado"),
-            ("EXW", "Lotação", "EXW/Lotação")
-        ]
+            # Carregar base de parâmetros contratuais
+            df_grupos = pd.read_excel(param_file)
+            st.success("Base de parâmetros contratuais carregada com sucesso!")
 
-        resultados = []
-
-        def buscar_regras_substituicao(df_regras, uf, modalidade, tipo_carga):
-            regras = df_regras[
-                (df_regras['UF'] == uf) & 
-                (df_regras['Recebe'] == 'S')
+            modalidades = [
+                ("FCA", "Fracionado", "FCA/Fracionado"),
+                ("FCA", "Lotação", "FCA/Lotação"),
+                ("EXW", "Fracionado", "EXW/Fracionado"),
+                ("EXW", "Lotação", "EXW/Lotação")
             ]
-            regras = regras[
-                (regras['Modalidade'].isna() | (regras['Modalidade'] == modalidade)) &
-                (regras['Tipo de carga'].isna() | (regras['Tipo de carga'] == tipo_carga))
-            ]
-            return regras
 
-        municipios = df_dist['MunicipioOrigem'].unique()
+            resultados = []
 
-        progress = st.progress(0)
-        total = len(municipios)
+            def buscar_regras_substituicao(df_regras, uf, modalidade, tipo_carga):
+                regras = df_regras[
+                    (df_regras['UF'] == uf) & 
+                    (df_regras['Recebe'] == 'S')
+                ]
+                regras = regras[
+                    (regras['Modalidade'].isna() | (regras['Modalidade'] == modalidade)) &
+                    (regras['Tipo de carga'].isna() | (regras['Tipo de carga'] == tipo_carga))
+                ]
+                return regras
 
-        for i, municipio in enumerate(municipios):
-            uf_municipio = municipio.split('-')[-1].strip()
+            municipios = df_dist['MunicipioOrigem'].unique()
 
-            for incoterm, tipo_carga, coluna_param in modalidades:
-                try:
-                    filial_encontrada = False
+            progress = st.progress(0)
+            total = len(municipios)
 
-                    # 1. Filial compatível
-                    filiais_ativas = df_filiais[df_filiais[coluna_param] == "S"]
-                    if not filiais_ativas.empty:
-                        dist_filiais = df_dist[
-                            (df_dist['MunicipioOrigem'] == municipio) &
-                            (df_dist['Filial'].isin(filiais_ativas['Filial']))
-                        ]
-                        dist_filiais_validas = dist_filiais[dist_filiais['KM_ID'].notna()]
+            for i, municipio in enumerate(municipios):
+                uf_municipio = municipio.split('-')[-1].strip()
 
-                        if not dist_filiais_validas.empty:
-                            mais_proxima = dist_filiais_validas.loc[dist_filiais_validas['KM_ID'].idxmin()]
-                            cod_filial = df_filiais[df_filiais['Filial'] == mais_proxima['Filial']]['Codigo'].values[0]
-                            filial_encontrada = True
-                            condicao = "Filial compatível com a modalidade"
+                for incoterm, tipo_carga, coluna_param in modalidades:
+                    try:
+                        filial_encontrada = False
 
-                    # 2. Filial única no estado
-                    if not filial_encontrada:
-                        filiais_uf = df_filiais[df_filiais['UF'] == uf_municipio]
-                        if len(filiais_uf) == 1:
-                            filial_unica = filiais_uf.iloc[0]
-                            dist_filial = df_dist[
-                                (df_dist['MunicipioOrigem'] == municipio) &
-                                (df_dist['Filial'] == filial_unica['Filial'])
+                        # 1. Filial compatível
+                        filiais_ativas = df_filiais[df_filiais[coluna_param] == "S"]
+                        if not filiais_ativas.empty:
+                            dist_filiais = df_dist[
+                                (df_dist['MunicipioOrigem'] == municipio) & 
+                                (df_dist['Filial'].isin(filiais_ativas['Filial']))
                             ]
+                            dist_filiais_validas = dist_filiais[dist_filiais['KM_ID'].notna()]
 
-                            if not dist_filial.empty and pd.notna(dist_filial['KM_ID'].iloc[0]):
-                                mais_proxima = dist_filial.iloc[0]
-                                cod_filial = filial_unica['Codigo']
+                            if not dist_filiais_validas.empty:
+                                mais_proxima = dist_filiais_validas.loc[dist_filiais_validas['KM_ID'].idxmin()]
+                                cod_filial = df_filiais[df_filiais['Filial'] == mais_proxima['Filial']]['Codigo'].values[0]
                                 filial_encontrada = True
-                                condicao = "Filial única no estado"
+                                condicao = "Filial compatível com a modalidade"
 
-                    # 3. Filial mais próxima sem restrição
-                    if not filial_encontrada:
-                        dist_filiais = df_dist[df_dist['MunicipioOrigem'] == municipio]
-                        dist_filiais_validas = dist_filiais[dist_filiais['KM_ID'].notna()]
+                        # 2. Filial única no estado
+                        if not filial_encontrada:
+                            filiais_uf = df_filiais[df_filiais['UF'] == uf_municipio]
+                            if len(filiais_uf) == 1:
+                                filial_unica = filiais_uf.iloc[0]
+                                dist_filial = df_dist[
+                                    (df_dist['MunicipioOrigem'] == municipio) & 
+                                    (df_dist['Filial'] == filial_unica['Filial'])
+                                ]
 
-                        if not dist_filiais_validas.empty:
-                            mais_proxima = dist_filiais_validas.loc[dist_filiais_validas['KM_ID'].idxmin()]
-                            cod_filial = df_filiais[df_filiais['Filial'] == mais_proxima['Filial']]['Codigo'].values[0]
-                            filial_encontrada = True
-                            condicao = "Filial mais próxima (sem restrição)"
+                                if not dist_filial.empty and pd.notna(dist_filial['KM_ID'].iloc[0]):
+                                    mais_proxima = dist_filial.iloc[0]
+                                    cod_filial = filial_unica['Codigo']
+                                    filial_encontrada = True
+                                    condicao = "Filial única no estado"
 
-                    if filial_encontrada:
-                        resultados.append({
-                            'Origem': municipio,
-                            'Incoterm': incoterm,
-                            'Tipo_Carga': tipo_carga,
-                            'Filial': mais_proxima['Filial'],
-                            'Codigo_Filial': f"{int(cod_filial):04}",
-                            'KM_ID': mais_proxima['KM_ID'],
-                            'Condicao_Atribuicao': condicao,
-                            'GRUPO ECONOMICO': None
-                        })
+                        # 3. Filial mais próxima sem restrição
+                        if not filial_encontrada:
+                            dist_filiais = df_dist[df_dist['MunicipioOrigem'] == municipio]
+                            dist_filiais_validas = dist_filiais[dist_filiais['KM_ID'].notna()]
 
-                        # Regras de substituição
-                        regras_subs = buscar_regras_substituicao(
-                            df_grupos, uf_municipio, incoterm, tipo_carga
-                        )
-                        for _, regra in regras_subs.iterrows():
-                            try:
-                                cod_filial_subs = df_filiais[df_filiais['Filial'] == regra['Substituta']]['Codigo'].iloc[0]
-                            except:
-                                logging.warning(f"Código não encontrado para filial {regra['Substituta']}")
-                                cod_filial_subs = '0000'
+                            if not dist_filiais_validas.empty:
+                                mais_proxima = dist_filiais_validas.loc[dist_filiais_validas['KM_ID'].idxmin()]
+                                cod_filial = df_filiais[df_filiais['Filial'] == mais_proxima['Filial']]['Codigo'].values[0]
+                                filial_encontrada = True
+                                condicao = "Filial mais próxima (sem restrição)"
 
-                            descricao_regra = (
-                                f"Regra de Substituição: {regra['Substituta']} recebe coletas de "
-                                f"{regra['Grupo Economico']} "
-                                f"({regra['Modalidade'] if pd.notna(regra['Modalidade']) else 'Todas as modalidades'}, "
-                                f"{regra['Tipo de carga'] if pd.notna(regra['Tipo de carga']) else 'Todos os tipos de carga'})"
-                            )
-                            if pd.notna(regra.get('Inicial')) and str(regra['Inicial']).strip():
-                                descricao_regra += f" ao invés de {regra['Inicial']}"
-
+                        if filial_encontrada:
                             resultados.append({
                                 'Origem': municipio,
                                 'Incoterm': incoterm,
                                 'Tipo_Carga': tipo_carga,
-                                'Filial': regra['Substituta'],
-                                'Codigo_Filial': f"{int(cod_filial_subs):04}",
-                                'KM_ID': None,
-                                'Condicao_Atribuicao': descricao_regra,
-                                'GRUPO ECONOMICO': f"{int(regra['Grupo Economico']):04}" if pd.notna(regra['Grupo Economico']) else None
+                                'Filial': mais_proxima['Filial'],
+                                'Codigo_Filial': f"{int(cod_filial):04}",
+                                'KM_ID': mais_proxima['KM_ID'],
+                                'Condicao_Atribuicao': condicao,
+                                'GRUPO ECONOMICO': None
                             })
 
-                    else:
+                            # Regras de substituição
+                            regras_subs = buscar_regras_substituicao(
+                                df_grupos, uf_municipio, incoterm, tipo_carga
+                            )
+                            for _, regra in regras_subs.iterrows():
+                                try:
+                                    cod_filial_subs = df_filiais[df_filiais['Filial'] == regra['Substituta']]['Codigo'].iloc[0]
+                                except:
+                                    logging.warning(f"Código não encontrado para filial {regra['Substituta']}")
+                                    cod_filial_subs = '0000'
+
+                                descricao_regra = (
+                                    f"Regra de Substituição: {regra['Substituta']} recebe coletas de "
+                                    f"{regra['Grupo Economico']} "
+                                    f"({regra['Modalidade'] if pd.notna(regra['Modalidade']) else 'Todas as modalidades'}, "
+                                    f"{regra['Tipo de carga'] if pd.notna(regra['Tipo de carga']) else 'Todos os tipos de carga'})"
+                                )
+                                if pd.notna(regra.get('Inicial')) and str(regra['Inicial']).strip():
+                                    descricao_regra += f" ao invés de {regra['Inicial']}"
+
+                                resultados.append({
+                                    'Origem': municipio,
+                                    'Incoterm': incoterm,
+                                    'Tipo_Carga': tipo_carga,
+                                    'Filial': regra['Substituta'],
+                                    'Codigo_Filial': f"{int(cod_filial_subs):04}",
+                                    'KM_ID': None,
+                                    'Condicao_Atribuicao': descricao_regra,
+                                    'GRUPO ECONOMICO': f"{int(regra['Grupo Economico']):04}" if pd.notna(regra['Grupo Economico']) else None
+                                })
+
+                        else:
+                            resultados.append({
+                                'Origem': municipio,
+                                'Incoterm': incoterm,
+                                'Tipo_Carga': tipo_carga,
+                                'Filial': None,
+                                'Codigo_Filial': None,
+                                'KM_ID': None,
+                                'Condicao_Atribuicao': "Sem filial disponível",
+                                'GRUPO ECONOMICO': None
+                            })
+
+                    except Exception as e:
+                        logging.error(f"Erro processando {municipio} - {incoterm} - {tipo_carga}: {str(e)}")
                         resultados.append({
                             'Origem': municipio,
                             'Incoterm': incoterm,
@@ -150,44 +177,34 @@ if st.button("Processar"):
                             'Filial': None,
                             'Codigo_Filial': None,
                             'KM_ID': None,
-                            'Condicao_Atribuicao': "Sem filial disponível",
+                            'Condicao_Atribuicao': "Erro de processamento",
                             'GRUPO ECONOMICO': None
                         })
 
-                except Exception as e:
-                    logging.error(f"Erro processando {municipio} - {incoterm} - {tipo_carga}: {str(e)}")
-                    resultados.append({
-                        'Origem': municipio,
-                        'Incoterm': incoterm,
-                        'Tipo_Carga': tipo_carga,
-                        'Filial': None,
-                        'Codigo_Filial': None,
-                        'KM_ID': None,
-                        'Condicao_Atribuicao': "Erro de processamento",
-                        'GRUPO ECONOMICO': None
-                    })
+                progress.progress((i + 1) / total)
 
-            progress.progress((i + 1) / total)
+            df_resultado = pd.DataFrame(resultados)
 
-        df_resultado = pd.DataFrame(resultados)
+            # Caminho para salvar
+            nome_completo = f"{nome_arquivo}.xlsx"
+            df_resultado.to_excel(nome_completo, index=False)
 
-        # Caminho para salvar
-        nome_completo = f"{nome_arquivo}.xlsx"
-        df_resultado.to_excel(nome_completo, index=False)
+            st.success("Processo concluído!")
 
-        st.success("Processo concluído!")
+            # Botão para download direto
+            with open(nome_completo, "rb") as f:
+                dados = f.read()
+                st.download_button(
+                    label="Download do arquivo Excel",
+                    data=dados,
+                    file_name=nome_completo,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
-        # Botão para download direto
-        with open(nome_completo, "rb") as f:
-            dados = f.read()
-            st.download_button(
-                label="Download do arquivo Excel",
-                data=dados,
-                file_name=nome_completo,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.write(f"Log de erros salvo em: {os.path.abspath(log_file)}")
 
-        st.write(f"Log de erros salvo em: {os.path.abspath(log_file)}")
+        except Exception as e:
+            st.error(f"Erro durante o processamento: {e}")
 
     else:
-        st.error("Por favor, faça o upload de todos os arquivos necessários.")
+        st.error("Por favor, faça o upload da base de parâmetros contratuais.")
