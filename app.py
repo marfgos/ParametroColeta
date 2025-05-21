@@ -3,7 +3,7 @@ import pandas as pd
 import os
 import logging
 from io import BytesIO, StringIO
-import zipfile
+import zipfile # Ainda necessário para o zip se você decidir voltar
 import datetime
 
 # === CONFIGURAÇÕES INICIAIS DO STREAMLIT ===
@@ -339,29 +339,40 @@ if st.button("🚀 Rodar Roteirização"):
 
         df_resultado = pd.DataFrame(resultados)
         
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-            excel_buffer = BytesIO()
-            df_resultado.to_excel(excel_buffer, index=False)
-            excel_buffer.seek(0)
-            zf.writestr("resultado_roteirizacao.xlsx", excel_buffer.getvalue())
-            logger.info("Resultado da roteirização adicionado ao ZIP.")
-
-            log_content = log_stream.getvalue()
-            zf.writestr("log_roteirizacao.log", log_content)
-            logger.info("Log da roteirização adicionado ao ZIP.")
-            
-        zip_buffer.seek(0)
-
         st.success("✅ Processamento concluído!")
-        st.dataframe(df_resultado)
+        st.dataframe(df_resultado, use_container_width=True)
 
-        st.download_button(
-            label="📥 Baixar Resultado (Excel + Log .zip)",
-            data=zip_buffer,
-            file_name="roteirizacao_completa.zip",
-            mime="application/zip"
-        )
+        # === NOVO: Botoões de Download Separados ===
+        
+        # Preparar o Excel para download
+        excel_buffer = BytesIO()
+        df_resultado.to_excel(excel_buffer, index=False)
+        excel_buffer.seek(0) # Retorna o ponteiro para o início do buffer
+
+        # Preparar o Log para download
+        log_content = log_stream.getvalue()
+        log_buffer = BytesIO(log_content.encode('utf-8')) # Codificar para bytes
+
+        col_excel, col_log = st.columns(2) # Cria duas colunas para os botões
+
+        with col_excel:
+            st.download_button(
+                label="📥 Baixar Resultados (Excel)",
+                data=excel_buffer,
+                file_name="resultado_roteirizacao.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_excel" # Chave única para o botão
+            )
+
+        with col_log:
+            st.download_button(
+                label="📄 Baixar Log",
+                data=log_buffer,
+                file_name="log_roteirizacao.log",
+                mime="text/plain",
+                key="download_log" # Chave única para o botão
+            )
+        # === FIM DOS NOVOS BOTÕES ===
 
         st.info("Log de processamento:")
         st.text_area("Visualizar Log", log_content, height=200)
