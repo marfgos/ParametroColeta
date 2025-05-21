@@ -4,9 +4,9 @@ import os
 import logging
 from io import BytesIO, StringIO
 import zipfile
-import datetime # Importa datetime para pd.Timestamp.now()
+import datetime
 
-# === CONFIGURAÇÕES INICIAIS DO STREAMLIT (DEVE SER A PRIMEIRA COISA APÓS OS IMPORTS) ===
+# === CONFIGURAÇÕES INICIAIS DO STREAMLIT ===
 st.set_page_config(page_title="Roteirização com Substituição", layout="wide")
 
 # === CONFIGURAÇÃO DE LOG ===
@@ -18,11 +18,7 @@ logger = logging.getLogger()
 
 st.title("📦 Roteirização com Regras de Substituição")
 
-# === CAMINHOS DOS ARQUIVOS DE PARÂMETROS ===
-CAMINHO_PARAMETROS_PADRAO = "parametros_contrato.xlsx"
-# CAMINHO_PARAMETETROS_USUARIO foi removido
-
-# Colunas esperadas para as bases de parâmetros, incluindo a nova coluna 'Data'
+# Colunas esperadas para a base de parâmetros
 colunas_base_parametros = {
     'Substituta': str,
     'Inicial': str,
@@ -31,7 +27,7 @@ colunas_base_parametros = {
     'Grupo Economico': str,
     'Modalidade': str,
     'Tipo de carga': str,
-    'Data': 'datetime64[ns]' # Adicionada a coluna de data aqui
+    'Data': 'datetime64[ns]'
 }
 
 # === CARREGAMENTO DAS BASES FIXAS INTERNAS (Distâncias e Filiais) ===
@@ -45,51 +41,72 @@ except Exception as e:
     logger.error(f"Erro ao carregar arquivos internos (distâncias/filiais): {e}")
     st.stop()
 
-# --- ESTA É A PARTE QUE PEGA AS FILIAIS DA BASE "Filiais_Geocodificadas" ---
+# --- Lista de Filiais para Dropdowns (se necessário, mantém a lógica) ---
 if 'Filial' in df_filiais.columns:
-    # Garante que a lista contenha strings e ordena
     lista_filiais = [''] + sorted(df_filiais['Filial'].astype(str).unique().tolist())
 else:
     lista_filiais = ['']
     st.warning("Coluna 'Filial' não encontrada em 'filiais_geocodificadas.xlsx'. Dropdowns de Filial podem não funcionar.")
-# --- FIM DA PARTE ---
 
+# === CARREGAMENTO E EXIBIÇÃO DA BASE DE PARÂMETROS PADRÃO VIA UPLOAD ===
+st.header("📄 Carregar Parâmetros Contratuais")
 
-# === CARREGAMENTO E EXIBIÇÃO DA BASE DE PARÂMETROS PADRÃO ===
-st.header("📄 Parâmetros Contratuais Padrão")
-try:
-    # Tenta ler o arquivo Excel completamente primeiro
-    df_padrao_parametros = pd.read_excel(CAMINHO_PARAMETROS_PADRAO)
-    
-    # Adiciona log para verificar o DataFrame após a leitura inicial
-    logger.info(f"DataFrame df_padrao_parametros lido inicialmente. Formato: {df_padrao_parametros.shape}, Colunas: {df_padrao_parametros.columns.tolist()}")
-    
-    # Itera sobre as colunas esperadas para garantir os tipos e preencher vazios
-    for col, dtype in colunas_base_parametros.items():
-        if col in df_padrao_parametros.columns:
-            if dtype == 'datetime64[ns]':
-                # Converte para datetime, forçando erros para NaT
-                df_padrao_parametros[col] = pd.to_datetime(df_padrao_parametros[col], errors='coerce')
-                # Log para verificar o resultado da conversão de data
-                if df_padrao_parametros[col].isnull().any():
-                    logger.warning(f"Coluna '{col}' em parametros_contrato.xlsx contém valores que não puderam ser convertidos para data (NaN/NaT).")
+# Widget de upload de arquivo
+uploaded_file = st.file_uploader(
+    "Faça o upload do arquivo 'parametros_contrato.xlsx'",
+    type=["xlsx"],
+    help="O arquivo Excel deve conter as regras de substituição."
+)
+
+# Inicializa df_padrao_parametros como um DataFrame vazio com as colunas corretas
+df_padrao_parametros = pd.DataFrame(columns=list(colunas_base_parametros.keys()))
+for col, dtype in colunas_base_parametros.items():
+    df_padrao_parametros[col] = pd.Series(dtype=dtype)
+    if dtype == 'datetime64[ns]':
+        df_padrao_parametros[col] = pd.NaT
+    else:
+        df_padrao_parametros[col].fillna('', inplace=True)
+
+if uploaded_file is not None:
+    try:
+        # Ler o arquivo Excel carregado
+        df_padrao_parametros = pd.read_excel(uploaded_file)
+        
+        # Processamento das colunas (mesma lógica de antes para garantir tipos e preencher vazios)
+        for col, dtype in colunas_base_parametros.items():
+            if col in df_padrao_parametros.columns:
+                if dtype == 'datetime64[ns]':
+                    df_padrao_parametros[col] = pd.to_datetime(df_padrao_parametros[col], errors='coerce')
+                    if df_padrao_parametros[col].isnull().any():
+                        logger.warning(f"Coluna '{col}' do arquivo carregado contém valores que não puderam ser convertidos para data (NaN/NaT).")
+                else:
+                    df_padrao_parametros[col] = df_padrao_parametros[col].astype(str).fillna('')
             else:
-                # Converte para string e preenche quaisquer NaN/None com string vazia
-                df_padrao_parametros[col] = df_padrao_parametros[col].astype(str).fillna('')
+                logger.warning(f"Coluna '{col}' esperada mas não encontrada no arquivo carregado. Adicionando-a com valores vazios.")
+                df_padrao_parametros[col] = pd.Series(dtype=dtype, index=df_padrao_parametros.index)
+                if dtype == 'datetime64[ns]':
+                    df_padrao_parametros[col] = pd.NaT
+                else:
+                    df_padrao_parametros[col].fillna('', inplace=True)
+
+        if df_padrao_parametros.empty:
+            st.warning("O arquivo carregado está vazio ou não contém dados válidos após o processamento.")
+            logger.warning("DataFrame de parâmetros padrão vazio ou inválido após carregamento e processamento do arquivo.")
+            # Reseta df_padrao_parametros para vazio com colunas corretas
+            df_padrao_parametros = pd.DataFrame(columns=list(colunas_base_parametros.keys()))
+            for col, dtype in colunas_base_parametros.items():
+                df_padrao_parametros[col] = pd.Series(dtype=dtype)
+                if dtype == 'datetime64[ns]':
+                    df_padrao_parametros[col] = pd.NaT
+                else:
+                    df_padrao_parametros[col].fillna('', inplace=True)
         else:
-            # Se a coluna esperada não existir no DataFrame lido, adicione-a
-            logger.warning(f"Coluna '{col}' esperada mas não encontrada em '{CAMINHO_PARAMETROS_PADRAO}'. Adicionando-a com valores vazios.")
-            df_padrao_parametros[col] = pd.Series(dtype=dtype, index=df_padrao_parametros.index)
-            if dtype == 'datetime64[ns]':
-                df_padrao_parametros[col] = pd.NaT # Not a Time para datas vazias
-            else:
-                df_padrao_parametros[col].fillna('', inplace=True)
+            st.success(f"Parâmetros contratuais carregados com sucesso! {df_padrao_parametros.shape[0]} regras.")
+            logger.info(f"Parâmetros contratuais carregados com sucesso! {df_padrao_parametros.shape[0]} regras.")
 
-    # Verifica se o DataFrame padrão está vazio após o processamento
-    if df_padrao_parametros.empty:
-        st.warning(f"O arquivo '{CAMINHO_PARAMETROS_PADRAO}' foi carregado, mas está vazio ou não contém dados válidos após o processamento.")
-        logger.warning(f"DataFrame de parâmetros padrão vazio ou inválido após carregamento e processamento.")
-        # Reinicia o DataFrame para um estado vazio com colunas corretas
+    except Exception as e:
+        st.error(f"Erro ao ler o arquivo Excel carregado: {e}")
+        logger.error(f"Erro ao ler o arquivo Excel carregado: {e}")
         df_padrao_parametros = pd.DataFrame(columns=list(colunas_base_parametros.keys()))
         for col, dtype in colunas_base_parametros.items():
             df_padrao_parametros[col] = pd.Series(dtype=dtype)
@@ -97,51 +114,33 @@ try:
                 df_padrao_parametros[col] = pd.NaT
             else:
                 df_padrao_parametros[col].fillna('', inplace=True)
-    else:
-        st.info(f"Parâmetros contratuais padrão carregados de '{CAMINHO_PARAMETROS_PADRAO}'. {df_padrao_parametros.shape[0]} regras carregadas.")
-        logger.info(f"Parâmetros contratuais padrão carregados de '{CAMINHO_PARAMETROS_PADRAO}'. {df_padrao_parametros.shape[0]} regras carregadas.")
-
-except FileNotFoundError:
-    st.warning(f"Arquivo '{CAMINHO_PARAMETROS_PADRAO}' não encontrado. Criando DataFrame padrão vazio.")
-    logger.warning(f"Arquivo '{CAMINHO_PARAMETROS_PADRAO}' não encontrado. Criando DataFrame padrão vazio.")
-    df_padrao_parametros = pd.DataFrame(columns=list(colunas_base_parametros.keys()))
-    for col, dtype in colunas_base_parametros.items():
-        df_padrao_parametros[col] = pd.Series(dtype=dtype)
-        if dtype == 'datetime64[ns]':
-            df_padrao_parametros[col] = pd.NaT
-        else:
-            df_padrao_parametros[col].fillna('', inplace=True)
-except Exception as e:
-    st.error(f"Erro ao carregar o arquivo de parâmetros padrão '{CAMINHO_PARAMETROS_PADRAO}': {e}")
-    logger.error(f"Erro ao carregar o arquivo de parâmetros padrão '{CAMINHO_PARAMETROS_PADRAO}': {e}")
-    df_padrao_parametros = pd.DataFrame(columns=list(colunas_base_parametros.keys()))
-    for col, dtype in colunas_base_parametros.items():
-        df_padrao_parametros[col] = pd.Series(dtype=dtype)
-        if dtype == 'datetime64[ns]':
-            df_padrao_parametros[col] = pd.NaT
-        else:
-            df_padrao_parametros[col].fillna('', inplace=True)
+else:
+    st.info("Aguardando o upload do arquivo de parâmetros contratuais.")
 
 st.dataframe(df_padrao_parametros, use_container_width=True, height=200)
 st.divider()
 
-# === BOTÃO PARA PROCESSAR (AGORA COM AS DUAS BASES CONCATENADAS) ===
+# === BOTÃO PARA PROCESSAR ===
 if st.button("🚀 Rodar Roteirização"):
     log_stream.seek(0)
     log_stream.truncate(0)
 
-    # A base de parâmetros final para o processamento será APENAS df_padrao_parametros
+    # Verifica se o df_padrao_parametros foi carregado
+    if df_padrao_parametros.empty:
+        st.warning("Por favor, faça o upload do arquivo de parâmetros contratuais antes de rodar a roteirização.")
+        logger.warning("Tentativa de rodar roteirização sem arquivo de parâmetros contratuais carregado.")
+        st.stop()
+    
     df_grupos_final = df_padrao_parametros.copy()
     logger.info("Base de parâmetros padrão utilizada para processamento (sem regras de usuário).")
 
-    # Remova linhas que não tenham os campos obrigatórios para uma regra
+    # Validação e limpeza das regras (mesma lógica anterior)
     df_grupos_final_validado = df_grupos_final.copy()
     for col, dtype in colunas_base_parametros.items():
         if col in df_grupos_final_validado.columns:
             if dtype == 'datetime64[ns]':
                 df_grupos_final_validado[col] = pd.to_datetime(df_grupos_final_validado[col], errors='coerce')
             else:
-                # Converte para string e depois trata strings vazias para NA para dropna
                 df_grupos_final_validado[col] = df_grupos_final_validado[col].astype(str).replace(r'^\s*$', '', regex=True)
         else:
             df_grupos_final_validado[col] = pd.Series(dtype=dtype, index=df_grupos_final_validado.index)
@@ -150,21 +149,18 @@ if st.button("🚀 Rodar Roteirização"):
             else:
                 df_grupos_final_validado[col].fillna('', inplace=True)
 
-    # Trata as strings vazias para NA para facilitar o dropna subset
     for col in ['Substituta', 'Recebe', 'UF']:
         df_grupos_final_validado[col] = df_grupos_final_validado[col].replace('', pd.NA)
 
     df_grupos_final_validado = df_grupos_final_validado.dropna(subset=['Substituta', 'Recebe', 'UF'])
 
-    # Volta as colunas de string de NA para vazio, mantendo NaT para datas
     for col, dtype in colunas_base_parametros.items():
         if col in df_grupos_final_validado.columns and dtype == str:
             df_grupos_final_validado[col].fillna('', inplace=True)
 
-
     if df_grupos_final_validado.empty:
-        st.error("A base de parâmetros final não contém regras válidas. Certifique-se de que 'Substituta', 'Recebe' e 'UF' não estejam vazios.")
-        logger.error("Base de parâmetros final sem regras válidas para processamento.")
+        st.error("A base de parâmetros carregada não contém regras válidas após a validação. Certifique-se de que 'Substituta', 'Recebe' e 'UF' não estejam vazios para suas regras.")
+        logger.error("Base de parâmetros final sem regras válidas para processamento após validação.")
         st.stop()
 
     with st.spinner("Processando..."):
@@ -178,30 +174,17 @@ if st.button("🚀 Rodar Roteirização"):
             ("EXW", "Lotação", "EXW/Lotação")
         ]
         
-        # --- FUNÇÃO MODIFICADA PARA BUSCAR REGRAS DE SUBSTITUIÇÃO (RETORNA TODAS AS APLICÁVEIS) ---
-        # ATENÇÃO: A lógica da função foi ajustada para ser mais similar ao `codigo 2`
-        # para a verificação de valores nulos/vazios em Modalidade e Tipo de Carga.
-        # No `codigo 2` eles verificavam `isna()`, aqui estamos verificando `''` (string vazia)
-        # que é o que Streamlit tende a produzir para campos não preenchidos de selectbox.
         def buscar_regras_substituicao_multiplas(df_regras_concat, uf, modalidade, tipo_carga, grupo_economico_origem=None):
             regras_aplicaveis = df_regras_concat[
                 (df_regras_concat['UF'] == uf) &
                 (df_regras_concat['Recebe'] == 'S')
             ].copy()
 
-            # Filtro para Modalidade e Tipo de Carga (vazio '' significa "qualquer")
-            # Este é o ajuste chave para replicar o comportamento de isna() do codigo 2
             regras_aplicaveis = regras_aplicaveis[
                 (regras_aplicaveis['Modalidade'].isin(['', modalidade])) &
                 (regras_aplicaveis['Tipo de carga'].isin(['', tipo_carga]))
             ]
             
-            # Filtro para Grupo Economico (vazio '' significa "qualquer")
-            # Se grupo_economico_origem não for vazio, busca por regras com esse grupo OU regras sem grupo especificado.
-            # Se grupo_economico_origem for vazio, busca APENAS regras sem grupo especificado.
-            # No contexto do `codigo 2`, o Grupo Econômico era sempre `None` na busca,
-            # então este filtro resultaria em `regras_aplicaveis['Grupo Economico'] == ''`.
-            # Para replicar o `codigo 2` exatamente, certifique-se de que `grupo_economico_origem` seja sempre `None`.
             if grupo_economico_origem and str(grupo_economico_origem).strip() != '':
                 regras_aplicaveis = regras_aplicaveis[
                     (regras_aplicaveis['Grupo Economico'] == '') |
@@ -211,7 +194,6 @@ if st.button("🚀 Rodar Roteirização"):
                 regras_aplicaveis = regras_aplicaveis[regras_aplicaveis['Grupo Economico'] == '']
 
             return regras_aplicaveis
-        # --- FIM DA FUNÇÃO MODIFICADA ---
 
         municipios = df_dist['MunicipioOrigem'].unique()
         total_municipios = len(municipios)
@@ -219,19 +201,14 @@ if st.button("🚀 Rodar Roteirização"):
 
         for i, municipio in enumerate(municipios):
             uf_municipio = municipio.split('-')[-1].strip()
-            
-            # Para replicar o `codigo 2` exatamente, o Grupo Econômico do município é None
-            # porque não há uma fonte de dados para ele no `codigo 2` no loop de processamento.
-            grupo_economico_municipio = None 
+            grupo_economico_municipio = None # Mantido None para replicar o comportamento do codigo 2
 
             for incoterm, tipo_carga, coluna_param in modalidades:
                 try:
                     filial_encontrada_padrao = False
-                    mais_proxima = None # Variável para armazenar a filial padrão encontrada
+                    mais_proxima = None
                     cod_filial_padrao = None
                     condicao_padrao = None
-
-                    # --- Lógica de Atribuição Padrão (Prioridades do segundo script) ---
 
                     # 1. Filial compatível com a modalidade (mais próxima)
                     filiais_ativas = df_filiais[df_filiais[coluna_param] == "S"]
@@ -286,10 +263,9 @@ if st.button("🚀 Rodar Roteirização"):
                             'Codigo_Filial': f"{int(cod_filial_padrao):04}",
                             'KM_ID': mais_proxima['KM_ID'],
                             'Condicao_Atribuicao': condicao_padrao,
-                            'GRUPO ECONOMICO': None # Grupo Econômico é da regra, não da atribuição padrão
+                            'GRUPO ECONOMICO': None
                         })
                     else:
-                        # Se nenhuma filial padrão for encontrada, adiciona uma linha indicando isso
                         resultados.append({
                             'Origem': municipio,
                             'Incoterm': incoterm,
@@ -303,7 +279,6 @@ if st.button("🚀 Rodar Roteirização"):
                         logger.warning(f"Nenhuma filial padrão encontrada para {municipio} ({incoterm}/{tipo_carga}).")
 
                     # --- Agora, aplica as regras de substituição como resultados ADICIONAIS ---
-                    # Usando apenas df_padrao_parametros, replicando o comportamento do codigo 2 com df_grupos
                     regras_subs = buscar_regras_substituicao_multiplas(
                         df_grupos_final_validado, uf_municipio, incoterm, tipo_carga, grupo_economico_municipio
                     )
@@ -311,16 +286,12 @@ if st.button("🚀 Rodar Roteirização"):
                     if not regras_subs.empty:
                         for _, regra in regras_subs.iterrows():
                             try:
-                                # Ajuste para garantir que 'Substituta' seja string antes da comparação
                                 cod_filial_subs = df_filiais[df_filiais['Filial'].astype(str) == str(regra['Substituta'])]['Codigo'].iloc[0]
                                 logger.info(f"Regra de substituição aplicável encontrada para {municipio} ({incoterm}/{tipo_carga}): Filial {regra['Substituta']} (Código: {int(cod_filial_subs):04}).")
                             except IndexError:
                                 logger.warning(f"Código não encontrado para filial substituta {regra['Substituta']} para {municipio} ({incoterm}/{tipo_carga}). Usando '0000'.")
                                 cod_filial_subs = '0000'
 
-                            # Ajuste para formatação da descrição ser mais fiel ao codigo 2
-                            # Nota: O codigo 2 usa `pd.notna()` e o `codigo 1` usa `str().strip() != ''`
-                            # para campos de texto. Mantenho a do `codigo 1` por ser mais robusta com Streamlit.
                             grupo_economico_str = str(regra['Grupo Economico']) if pd.notna(regra['Grupo Economico']) and str(regra['Grupo Economico']).strip() != '' else 'qualquer grupo'
                             modalidade_str = regra['Modalidade'] if pd.notna(regra['Modalidade']) and str(regra['Modalidade']).strip() != '' else 'Todas as modalidades'
                             tipo_carga_str = regra['Tipo de carga'] if pd.notna(regra['Tipo de carga']) and str(regra['Tipo de carga']).strip() != '' else 'Todos os tipos de carga'
@@ -341,7 +312,7 @@ if st.button("🚀 Rodar Roteirização"):
                                 'Tipo_Carga': tipo_carga,
                                 'Filial': regra['Substituta'],
                                 'Codigo_Filial': f"{int(cod_filial_subs):04}",
-                                'KM_ID': None, # Regra de substituição não tem KM_ID diretamente
+                                'KM_ID': None,
                                 'Condicao_Atribuicao': descricao_regra,
                                 'GRUPO ECONOMICO': f"{int(float(grupo_economico_str)):04}" if grupo_economico_str != 'qualquer grupo' and str(grupo_economico_str).replace('.', '', 1).isdigit() else None
                             })
