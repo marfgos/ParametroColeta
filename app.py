@@ -20,7 +20,7 @@ st.title("📦 Roteirização com Regras de Substituição")
 
 # === CAMINHOS DOS ARQUIVOS DE PARÂMETROS ===
 CAMINHO_PARAMETROS_PADRAO = "parametros_contrato.xlsx"
-CAMINHO_PARAMETETROS_USUARIO = "parametros_usuario.xlsx"
+# CAMINHO_PARAMETETROS_USUARIO foi removido
 
 # Colunas esperadas para as bases de parâmetros, incluindo a nova coluna 'Data'
 colunas_base_parametros = {
@@ -112,8 +112,8 @@ except FileNotFoundError:
         else:
             df_padrao_parametros[col].fillna('', inplace=True)
 except Exception as e:
-    st.error(f"Erro ao carregar o arquivo de parâmetros padrão '{CAMINHO_PARAMETROS_PADRÃO}': {e}")
-    logger.error(f"Erro ao carregar o arquivo de parâmetros padrão '{CAMINHO_PARAMETROS_PADRÃO}': {e}")
+    st.error(f"Erro ao carregar o arquivo de parâmetros padrão '{CAMINHO_PARAMETROS_PADRAO}': {e}")
+    logger.error(f"Erro ao carregar o arquivo de parâmetros padrão '{CAMINHO_PARAMETROS_PADRAO}': {e}")
     df_padrao_parametros = pd.DataFrame(columns=list(colunas_base_parametros.keys()))
     for col, dtype in colunas_base_parametros.items():
         df_padrao_parametros[col] = pd.Series(dtype=dtype)
@@ -125,201 +125,24 @@ except Exception as e:
 st.dataframe(df_padrao_parametros, use_container_width=True, height=200)
 st.divider()
 
-# === CARREGAMENTO E EDIÇÃO DA BASE DE PARÂMETROS DO USUÁRIO ===
-st.header("✏️ Parâmetros Contratuais do Usuário (Editável)")
-
-df_grupos_usuario = pd.DataFrame(columns=list(colunas_base_parametros.keys()))
-for col, dtype in colunas_base_parametros.items():
-    df_grupos_usuario[col] = pd.Series(dtype=dtype)
-    if dtype == 'datetime64[ns]':
-        df_grupos_usuario[col] = pd.NaT
-    else:
-        df_grupos_usuario[col].fillna('', inplace=True)
-
-if os.path.exists(CAMINHO_PARAMETETROS_USUARIO):
-    try:
-        df_loaded = pd.read_excel(CAMINHO_PARAMETETROS_USUARIO)
-        # Log para verificar o DataFrame do usuário após a leitura inicial
-        logger.info(f"DataFrame df_grupos_usuario lido inicialmente. Formato: {df_loaded.shape}, Colunas: {df_loaded.columns.tolist()}")
-
-        for col, dtype in colunas_base_parametros.items():
-            if col in df_loaded.columns:
-                if dtype == 'datetime64[ns]':
-                    df_loaded[col] = pd.to_datetime(df_loaded[col], errors='coerce')
-                    if df_loaded[col].isnull().any():
-                        logger.warning(f"Coluna '{col}' em parametros_usuario.xlsx contém valores que não puderam ser convertidos para data (NaN/NaT).")
-                else:
-                    df_loaded[col] = df_loaded[col].astype(dtype).fillna('')
-            else:
-                logger.warning(f"Coluna '{col}' esperada mas não encontrada em '{CAMINHO_PARAMETETROS_USUARIO}'. Adicionando-a com valores vazios.")
-                df_loaded[col] = pd.Series(dtype=dtype, index=df_loaded.index)
-                if dtype == 'datetime64[ns]':
-                    df_loaded[col] = pd.NaT
-                else:
-                    df_loaded[col].fillna('', inplace=True)
-        df_grupos_usuario = df_loaded
-        st.info(f"Parâmetros do usuário carregados de '{CAMINHO_PARAMETETROS_USUARIO}'. {df_grupos_usuario.shape[0]} regras carregadas.")
-        logger.info(f"Parâmetros do usuário carregados de '{CAMINHO_PARAMETETROS_USUARIO}'. {df_grupos_usuario.shape[0]} regras carregadas.")
-    except Exception as e:
-        st.warning(f"Erro ao carregar o arquivo de parâmetros do usuário: {e}. Criando base vazia.")
-        logger.warning(f"Erro ao carregar o arquivo de parâmetros do usuário: {e}. Criando base vazia.")
-else:
-    st.info("Arquivo de parâmetros do usuário não encontrado. Comece a adicionar suas regras abaixo.")
-    logger.info("Arquivo de parâmetros do usuário não encontrado. Criando base vazia.")
-
-# Configuração das colunas para o data_editor, incluindo os dropdowns de filial e a nova coluna 'Data'
-column_configuration = {
-    "Substituta": st.column_config.SelectboxColumn(
-        "Substituta",
-        help="Filial que irá substituir a coleta",
-        options=lista_filiais,
-        required=True,
-    ),
-    "Inicial": st.column_config.SelectboxColumn(
-        "Inicial",
-        help="Filial de origem da coleta a ser substituída (opcional)",
-        options=lista_filiais,
-        required=False,
-    ),
-    "Recebe": st.column_config.SelectboxColumn(
-        "Recebe",
-        help="Indica se esta regra define quem recebe a coleta (S/N)",
-        options=['', 'S', 'N'],
-        required=True,
-    ),
-    "UF": st.column_config.TextColumn(
-        "UF",
-        help="Estado da coleta (Ex: SP, MG)",
-        width="small",
-        required=True,
-        max_chars=2,
-    ),
-    "Grupo Economico": st.column_config.TextColumn(
-        "Grupo Econômico",
-        help="Código ou nome do grupo econômico (opcional)",
-    ),
-    "Modalidade": st.column_config.SelectboxColumn(
-        "Modalidade",
-        help="Modalidade de transporte (FCA/EXW) (opcional)",
-        options=['', 'FCA', 'EXW'],
-        required=False,
-    ),
-    "Tipo de carga": st.column_config.SelectboxColumn(
-        "Tipo de carga",
-        help="Tipo de carga (Fracionado/Lotação) (opcional)",
-        options=['', 'Fracionado', 'Lotação'],
-        required=False,
-    ),
-    "Data": st.column_config.DateColumn( # Adicionada a coluna de data
-        "Data",
-        help="Data da última atualização desta regra. Preenchida automaticamente ao salvar se vazia.",
-        format="DD/MM/YYYY",
-        required=False,
-    ),
-}
-
-
-df_grupos_usuario_editado = st.data_editor(
-    df_grupos_usuario,
-    num_rows="dynamic",
-    use_container_width=True,
-    key="regras_usuario_editadas",
-    column_config=column_configuration,
-    hide_index=True
-)
-
-# === BOTÃO PARA SALVAR AS ALTERAÇÕES DO USUÁRIO ===
-if st.button("💾 Salvar minhas Regras (Usuário)"):
-    try:
-        df_to_save = df_grupos_usuario_editado.copy()
-        
-        for col, dtype in colunas_base_parametros.items():
-            if col in df_to_save.columns:
-                if dtype == 'datetime64[ns]':
-                    df_to_save[col] = pd.to_datetime(df_to_save[col], errors='coerce')
-                    # Preenche a coluna 'Data' com a data atual se for NaT
-                    df_to_save[col] = df_to_save[col].apply(lambda x: pd.Timestamp.now().normalize() if pd.isna(x) else x)
-                else:
-                    df_to_save[col] = df_to_save[col].astype(str).replace(r'^\s*$', '', regex=True)
-            else:
-                # Caso uma coluna não exista no DataFrame editado (ex: o usuário a removeu acidentalmente)
-                # Garante que ela seja adicionada com o tipo correto para evitar erros de concatenação
-                df_to_save[col] = pd.Series(dtype=dtype, index=df_to_save.index)
-                if dtype == 'datetime64[ns]':
-                    df_to_save[col] = pd.NaT
-                else:
-                    df_to_save[col].fillna('', inplace=True)
-
-
-        # Remove linhas que são completamente vazias
-        df_to_save.replace('', pd.NA, inplace=True) # Temporariamente para dropna
-        df_to_save = df_to_save.dropna(how='all')
-        
-        # Preenche os NAs de volta com strings vazias para as colunas de texto
-        # e deixa NaT para as datas (excel exporta como vazio)
-        for col, dtype in colunas_base_parametros.items():
-            if col in df_to_save.columns and dtype == str:
-                df_to_save[col].fillna('', inplace=True)
-
-        # Filtra por linhas com campos obrigatórios preenchidos
-        df_to_save = df_to_save[
-            (df_to_save['Substituta'].astype(bool)) &
-            (df_to_save['Recebe'].astype(bool)) &
-            (df_to_save['UF'].astype(bool))
-        ]
-
-        if not df_to_save.empty:
-            df_to_save.to_excel(CAMINHO_PARAMETETROS_USUARIO, index=False)
-            st.success("✅ Suas regras foram salvas com sucesso!")
-            st.warning("⚠️ Em ambientes de nuvem (como Streamlit Community Cloud), as alterações podem ser perdidas após o reinício do aplicativo.")
-            logger.info("Regras do usuário salvas com sucesso.")
-        else:
-            st.error("❌ Nenhuma regra válida para salvar. As colunas 'Substituta', 'Recebe' e 'UF' são obrigatórias e não podem estar vazias.")
-
-    except Exception as e:
-        st.error(f"❌ Erro ao salvar suas regras: {e}")
-        logger.error(f"Erro ao salvar regras do usuário: {e}")
-
-st.divider()
-
 # === BOTÃO PARA PROCESSAR (AGORA COM AS DUAS BASES CONCATENADAS) ===
 if st.button("🚀 Rodar Roteirização"):
     log_stream.seek(0)
     log_stream.truncate(0)
 
-    # Processar o DataFrame do usuário para garantir tipos corretos e dados limpos
-    df_usuario_processed = df_grupos_usuario_editado.copy()
-    for col, dtype in colunas_base_parametros.items():
-        if col in df_usuario_processed.columns:
-            if dtype == 'datetime64[ns]':
-                df_usuario_processed[col] = pd.to_datetime(df_usuario_processed[col], errors='coerce')
-            else:
-                df_usuario_processed[col] = df_usuario_processed[col].astype(str).replace(r'^\s*$', '', regex=True)
-        else:
-            df_usuario_processed[col] = pd.Series(dtype=dtype, index=df_usuario_processed.index)
-            if dtype == 'datetime64[ns]':
-                df_usuario_processed[col] = pd.NaT
-            else:
-                df_usuario_processed[col].fillna('', inplace=True)
-
-    # Concatene as bases padrão e do usuário.
-    # Adicionamos uma coluna de origem para distinguir as regras, se necessário no futuro.
-    df_padrao_parametros['Origem_Regra'] = 'Padrao'
-    df_usuario_processed['Origem_Regra'] = 'Usuario'
-    
-    df_grupos_final = pd.concat([df_padrao_parametros, df_usuario_processed.dropna(how='all')], ignore_index=True)
-
-    logger.info("Bases de parâmetros padrão e do usuário concatenadas para processamento.")
+    # A base de parâmetros final para o processamento será APENAS df_padrao_parametros
+    df_grupos_final = df_padrao_parametros.copy()
+    logger.info("Base de parâmetros padrão utilizada para processamento (sem regras de usuário).")
 
     # Remova linhas que não tenham os campos obrigatórios para uma regra
-    # e garanta que os tipos estejam corretos após concatenação e manipulação
     df_grupos_final_validado = df_grupos_final.copy()
     for col, dtype in colunas_base_parametros.items():
         if col in df_grupos_final_validado.columns:
             if dtype == 'datetime64[ns]':
                 df_grupos_final_validado[col] = pd.to_datetime(df_grupos_final_validado[col], errors='coerce')
             else:
-                df_grupos_final_validado[col] = df_grupos_final_validado[col].astype(str) # Garante que sejam strings para o replace
+                # Converte para string e depois trata strings vazias para NA para dropna
+                df_grupos_final_validado[col] = df_grupos_final_validado[col].astype(str).replace(r'^\s*$', '', regex=True)
         else:
             df_grupos_final_validado[col] = pd.Series(dtype=dtype, index=df_grupos_final_validado.index)
             if dtype == 'datetime64[ns]':
@@ -356,21 +179,29 @@ if st.button("🚀 Rodar Roteirização"):
         ]
         
         # --- FUNÇÃO MODIFICADA PARA BUSCAR REGRAS DE SUBSTITUIÇÃO (RETORNA TODAS AS APLICÁVEIS) ---
+        # ATENÇÃO: A lógica da função foi ajustada para ser mais similar ao `codigo 2`
+        # para a verificação de valores nulos/vazios em Modalidade e Tipo de Carga.
+        # No `codigo 2` eles verificavam `isna()`, aqui estamos verificando `''` (string vazia)
+        # que é o que Streamlit tende a produzir para campos não preenchidos de selectbox.
         def buscar_regras_substituicao_multiplas(df_regras_concat, uf, modalidade, tipo_carga, grupo_economico_origem=None):
             regras_aplicaveis = df_regras_concat[
                 (df_regras_concat['UF'] == uf) &
                 (df_regras_concat['Recebe'] == 'S')
             ].copy()
 
-            # Filtro para Modalidade e Tipo de Carga (vazio significa "qualquer")
+            # Filtro para Modalidade e Tipo de Carga (vazio '' significa "qualquer")
+            # Este é o ajuste chave para replicar o comportamento de isna() do codigo 2
             regras_aplicaveis = regras_aplicaveis[
                 (regras_aplicaveis['Modalidade'].isin(['', modalidade])) &
                 (regras_aplicaveis['Tipo de carga'].isin(['', tipo_carga]))
             ]
             
-            # Filtro para Grupo Economico (vazio significa "qualquer")
+            # Filtro para Grupo Economico (vazio '' significa "qualquer")
             # Se grupo_economico_origem não for vazio, busca por regras com esse grupo OU regras sem grupo especificado.
             # Se grupo_economico_origem for vazio, busca APENAS regras sem grupo especificado.
+            # No contexto do `codigo 2`, o Grupo Econômico era sempre `None` na busca,
+            # então este filtro resultaria em `regras_aplicaveis['Grupo Economico'] == ''`.
+            # Para replicar o `codigo 2` exatamente, certifique-se de que `grupo_economico_origem` seja sempre `None`.
             if grupo_economico_origem and str(grupo_economico_origem).strip() != '':
                 regras_aplicaveis = regras_aplicaveis[
                     (regras_aplicaveis['Grupo Economico'] == '') |
@@ -389,9 +220,9 @@ if st.button("🚀 Rodar Roteirização"):
         for i, municipio in enumerate(municipios):
             uf_municipio = municipio.split('-')[-1].strip()
             
-            # ATENÇÃO: Se o Grupo Econômico for uma característica do município de origem,
-            # você precisaria carregá-lo aqui (ex: de df_dist ou outra base).
-            grupo_economico_municipio = None # Mantenha None se você não tem essa informação por município
+            # Para replicar o `codigo 2` exatamente, o Grupo Econômico do município é None
+            # porque não há uma fonte de dados para ele no `codigo 2` no loop de processamento.
+            grupo_economico_municipio = None 
 
             for incoterm, tipo_carga, coluna_param in modalidades:
                 try:
@@ -472,6 +303,7 @@ if st.button("🚀 Rodar Roteirização"):
                         logger.warning(f"Nenhuma filial padrão encontrada para {municipio} ({incoterm}/{tipo_carga}).")
 
                     # --- Agora, aplica as regras de substituição como resultados ADICIONAIS ---
+                    # Usando apenas df_padrao_parametros, replicando o comportamento do codigo 2 com df_grupos
                     regras_subs = buscar_regras_substituicao_multiplas(
                         df_grupos_final_validado, uf_municipio, incoterm, tipo_carga, grupo_economico_municipio
                     )
@@ -479,14 +311,18 @@ if st.button("🚀 Rodar Roteirização"):
                     if not regras_subs.empty:
                         for _, regra in regras_subs.iterrows():
                             try:
+                                # Ajuste para garantir que 'Substituta' seja string antes da comparação
                                 cod_filial_subs = df_filiais[df_filiais['Filial'].astype(str) == str(regra['Substituta'])]['Codigo'].iloc[0]
                                 logger.info(f"Regra de substituição aplicável encontrada para {municipio} ({incoterm}/{tipo_carga}): Filial {regra['Substituta']} (Código: {int(cod_filial_subs):04}).")
                             except IndexError:
                                 logger.warning(f"Código não encontrado para filial substituta {regra['Substituta']} para {municipio} ({incoterm}/{tipo_carga}). Usando '0000'.")
                                 cod_filial_subs = '0000'
 
+                            # Ajuste para formatação da descrição ser mais fiel ao codigo 2
+                            # Nota: O codigo 2 usa `pd.notna()` e o `codigo 1` usa `str().strip() != ''`
+                            # para campos de texto. Mantenho a do `codigo 1` por ser mais robusta com Streamlit.
                             grupo_economico_str = str(regra['Grupo Economico']) if pd.notna(regra['Grupo Economico']) and str(regra['Grupo Economico']).strip() != '' else 'qualquer grupo'
-                            modalidade_str = regra['Modalidade'] if pd.notna(regra['Modalidade']) and str(regra['Modalidade']).strip() != '' else 'Todas modalidades'
+                            modalidade_str = regra['Modalidade'] if pd.notna(regra['Modalidade']) and str(regra['Modalidade']).strip() != '' else 'Todas as modalidades'
                             tipo_carga_str = regra['Tipo de carga'] if pd.notna(regra['Tipo de carga']) and str(regra['Tipo de carga']).strip() != '' else 'Todos os tipos de carga'
 
                             descricao_regra = (
@@ -525,9 +361,9 @@ if st.button("🚀 Rodar Roteirização"):
                         'GRUPO ECONOMICO': None
                     })
                     
-            percent_complete = min(100, int((i + 1) / total_municipios * 100))
-            my_bar.progress(percent_complete, text=f"{progress_text} {percent_complete}% Concluído.")
-            
+                percent_complete = min(100, int((i + 1) / total_municipios * 100))
+                my_bar.progress(percent_complete, text=f"{progress_text} {percent_complete}% Concluído.")
+                
         my_bar.progress(100, text=f"{progress_text} 100% Concluído.")
 
         df_resultado = pd.DataFrame(resultados)
