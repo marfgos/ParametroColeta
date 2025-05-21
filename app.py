@@ -57,24 +57,49 @@ else:
 # === CARREGAMENTO E EXIBIÇÃO DA BASE DE PARÂMETROS PADRÃO ===
 st.header("📄 Parâmetros Contratuais Padrão")
 try:
+    # Tenta ler o arquivo Excel completamente primeiro
     df_padrao_parametros = pd.read_excel(CAMINHO_PARAMETROS_PADRAO)
+    
+    # Adiciona log para verificar o DataFrame após a leitura inicial
+    logger.info(f"DataFrame df_padrao_parametros lido inicialmente. Formato: {df_padrao_parametros.shape}, Colunas: {df_padrao_parametros.columns.tolist()}")
+    
+    # Itera sobre as colunas esperadas para garantir os tipos e preencher vazios
     for col, dtype in colunas_base_parametros.items():
         if col in df_padrao_parametros.columns:
             if dtype == 'datetime64[ns]':
+                # Converte para datetime, forçando erros para NaT
                 df_padrao_parametros[col] = pd.to_datetime(df_padrao_parametros[col], errors='coerce')
+                # Log para verificar o resultado da conversão de data
+                if df_padrao_parametros[col].isnull().any():
+                    logger.warning(f"Coluna '{col}' em parametros_contrato.xlsx contém valores que não puderam ser convertidos para data (NaN/NaT).")
             else:
-                df_padrao_parametros[col] = df_padrao_parametros[col].astype(dtype).fillna('')
+                # Converte para string e preenche quaisquer NaN/None com string vazia
+                df_padrao_parametros[col] = df_padrao_parametros[col].astype(str).fillna('')
         else:
-            # Se a coluna não existir, crie-a com o tipo correto e preencha vazios
+            # Se a coluna esperada não existir no DataFrame lido, adicione-a
+            logger.warning(f"Coluna '{col}' esperada mas não encontrada em '{CAMINHO_PARAMETROS_PADRAO}'. Adicionando-a com valores vazios.")
             df_padrao_parametros[col] = pd.Series(dtype=dtype, index=df_padrao_parametros.index)
             if dtype == 'datetime64[ns]':
                 df_padrao_parametros[col] = pd.NaT # Not a Time para datas vazias
             else:
                 df_padrao_parametros[col].fillna('', inplace=True)
 
+    # Verifica se o DataFrame padrão está vazio após o processamento
+    if df_padrao_parametros.empty:
+        st.warning(f"O arquivo '{CAMINHO_PARAMETROS_PADRAO}' foi carregado, mas está vazio ou não contém dados válidos após o processamento.")
+        logger.warning(f"DataFrame de parâmetros padrão vazio ou inválido após carregamento e processamento.")
+        # Reinicia o DataFrame para um estado vazio com colunas corretas
+        df_padrao_parametros = pd.DataFrame(columns=list(colunas_base_parametros.keys()))
+        for col, dtype in colunas_base_parametros.items():
+            df_padrao_parametros[col] = pd.Series(dtype=dtype)
+            if dtype == 'datetime64[ns]':
+                df_padrao_parametros[col] = pd.NaT
+            else:
+                df_padrao_parametros[col].fillna('', inplace=True)
+    else:
+        st.info(f"Parâmetros contratuais padrão carregados de '{CAMINHO_PARAMETROS_PADRAO}'. {df_padrao_parametros.shape[0]} regras carregadas.")
+        logger.info(f"Parâmetros contratuais padrão carregados de '{CAMINHO_PARAMETROS_PADRAO}'. {df_padrao_parametros.shape[0]} regras carregadas.")
 
-    st.info(f"Parâmetros contratuais padrão carregados de '{CAMINHO_PARAMETROS_PADRAO}'.")
-    logger.info(f"Parâmetros contratuais padrão carregados de '{CAMINHO_PARAMETROS_PADRAO}'.")
 except FileNotFoundError:
     st.warning(f"Arquivo '{CAMINHO_PARAMETROS_PADRAO}' não encontrado. Criando DataFrame padrão vazio.")
     logger.warning(f"Arquivo '{CAMINHO_PARAMETROS_PADRAO}' não encontrado. Criando DataFrame padrão vazio.")
@@ -113,21 +138,27 @@ for col, dtype in colunas_base_parametros.items():
 if os.path.exists(CAMINHO_PARAMETETROS_USUARIO):
     try:
         df_loaded = pd.read_excel(CAMINHO_PARAMETETROS_USUARIO)
+        # Log para verificar o DataFrame do usuário após a leitura inicial
+        logger.info(f"DataFrame df_grupos_usuario lido inicialmente. Formato: {df_loaded.shape}, Colunas: {df_loaded.columns.tolist()}")
+
         for col, dtype in colunas_base_parametros.items():
             if col in df_loaded.columns:
                 if dtype == 'datetime64[ns]':
                     df_loaded[col] = pd.to_datetime(df_loaded[col], errors='coerce')
+                    if df_loaded[col].isnull().any():
+                        logger.warning(f"Coluna '{col}' em parametros_usuario.xlsx contém valores que não puderam ser convertidos para data (NaN/NaT).")
                 else:
                     df_loaded[col] = df_loaded[col].astype(dtype).fillna('')
             else:
+                logger.warning(f"Coluna '{col}' esperada mas não encontrada em '{CAMINHO_PARAMETETROS_USUARIO}'. Adicionando-a com valores vazios.")
                 df_loaded[col] = pd.Series(dtype=dtype, index=df_loaded.index)
                 if dtype == 'datetime64[ns]':
                     df_loaded[col] = pd.NaT
                 else:
                     df_loaded[col].fillna('', inplace=True)
         df_grupos_usuario = df_loaded
-        st.info(f"Parâmetros do usuário carregados de '{CAMINHO_PARAMETETROS_USUARIO}'.")
-        logger.info(f"Parâmetros do usuário carregados de '{CAMINHO_PARAMETETROS_USUARIO}'.")
+        st.info(f"Parâmetros do usuário carregados de '{CAMINHO_PARAMETETROS_USUARIO}'. {df_grupos_usuario.shape[0]} regras carregadas.")
+        logger.info(f"Parâmetros do usuário carregados de '{CAMINHO_PARAMETETROS_USUARIO}'. {df_grupos_usuario.shape[0]} regras carregadas.")
     except Exception as e:
         st.warning(f"Erro ao carregar o arquivo de parâmetros do usuário: {e}. Criando base vazia.")
         logger.warning(f"Erro ao carregar o arquivo de parâmetros do usuário: {e}. Criando base vazia.")
