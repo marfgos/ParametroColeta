@@ -108,9 +108,6 @@ if uploaded_file is not None:
                 logger.warning(f"Coluna '{col}' esperada mas não encontrada no arquivo carregado. Adicionando-a com valores vazios.")
                 df_padrao_parametros[col] = '' # Adiciona como string vazia se não existir
 
-        # A coluna 'Data', se existir no Excel, será ignorada pois não está em colunas_base_parametros
-        # Qualquer coluna não listada em 'colunas_base_parametros' será simplesmente ignorada no processamento subsequente
-
         if df_padrao_parametros.empty:
             st.warning("O arquivo carregado está vazio ou não contém dados válidos após o processamento.")
             logger.warning("DataFrame de parâmetros padrão vazio ou inválido após carregamento e processamento do arquivo.")
@@ -195,25 +192,20 @@ if st.button("🚀 Rodar Roteirização"):
             ("EXW", "Lotação", "EXW/Lotação")
         ]
         
-        def buscar_regras_substituicao_multiplas(df_regras_concat, uf, modalidade, tipo_carga, grupo_economico_origem=None):
+        # FUNÇÃO AJUSTADA: Replicar a lógica do script original (sem filtro de Grupo Economico)
+        def buscar_regras_substituicao_original(df_regras_concat, uf, modalidade, tipo_carga):
             regras_aplicaveis = df_regras_concat[
                 (df_regras_concat['UF'] == uf) &
                 (df_regras_concat['Recebe'] == 'S')
             ].copy()
 
+            # Modalidade e tipo de carga podem ser nulos (valem para todos) no original, aqui vazio significa 'todos'
             regras_aplicaveis = regras_aplicaveis[
-                (regras_aplicaveis['Modalidade'].isin(['', modalidade])) &
-                (regras_aplicaveis['Tipo de carga'].isin(['', tipo_carga]))
+                (regras_aplicaveis['Modalidade'] == '') | (regras_aplicaveis['Modalidade'] == modalidade)
             ]
-            
-            if grupo_economico_origem and str(grupo_economico_origem).strip() != '':
-                regras_aplicaveis = regras_aplicaveis[
-                    (regras_aplicaveis['Grupo Economico'] == '') |
-                    (regras_aplicaveis['Grupo Economico'] == grupo_economico_origem)
-                ]
-            else:
-                regras_aplicaveis = regras_aplicaveis[regras_aplicaveis['Grupo Economico'] == '']
-
+            regras_aplicaveis = regras_aplicaveis[
+                (regras_aplicaveis['Tipo de carga'] == '') | (regras_aplicaveis['Tipo de carga'] == tipo_carga)
+            ]
             return regras_aplicaveis
 
         municipios = df_dist['MunicipioOrigem'].unique()
@@ -222,8 +214,7 @@ if st.button("🚀 Rodar Roteirização"):
 
         for i, municipio in enumerate(municipios):
             uf_municipio = municipio.split('-')[-1].strip()
-            grupo_economico_municipio = None # Mantido None para replicar o comportamento do codigo 2
-
+            
             for incoterm, tipo_carga, coluna_param in modalidades:
                 try:
                     filial_encontrada_padrao = False
@@ -286,7 +277,56 @@ if st.button("🚀 Rodar Roteirização"):
                             'Condicao_Atribuicao': condicao_padrao,
                             'GRUPO ECONOMICO': None # Grupo Econômico é da regra, não da atribuição padrão
                         })
-                    else:
+
+                        # --- Agora, aplica as regras de substituição SOMENTE SE UMA FILIAL PADRÃO FOI ENCONTRADA ---
+                        regras_subs = buscar_regras_substituicao_original(
+                            df_grupos_final_validado, uf_municipio, incoterm, tipo_carga
+                        )
+
+                        if not regras_subs.empty:
+                            for _, regra in regras_subs.iterrows():
+                                try:
+                                    # Ajuste para garantir que 'Substituta' seja string antes da comparação
+                                    cod_filial_subs = df_filiais[df_filiais['Filial'].astype(str) == str(regra['Substituta'])]['Codigo'].iloc[0]
+                                    logger.info(f"Regra de substituição aplicável encontrada para {municipio} ({incoterm}/{tipo_carga}): Filial {regra['Substituta']} (Código: {int(cod_filial_subs):04}).")
+                                except IndexError:
+                                    logger.warning(f"Código não encontrado para filial substituta {regra['Substituta']} para {municipio} ({incoterm}/{tipo_carga}). Usando '0000'.")
+                                    cod_filial_subs = '0000'
+
+                                # Replicar o comportamento do Grupo Economico do script original
+                                grupo_economico_str = str(regra['Grupo Economico']) if pd.notna(regra['Grupo Economico']) and str(regra['Grupo Economico']).strip() != '' else None
+                                modalidade_str = regra['Modalidade'] if pd.notna(regra['Modalidade']) and str(regra['Modalidade']).strip() != '' else 'Todas as modalidades'
+                                tipo_carga_str = regra['Tipo de carga'] if pd.notna(regra['Tipo de carga']) and str(regra['Tipo de carga']).strip() != '' else 'Todos os tipos de carga'
+
+                                descricao_regra = (
+                                    f"Regra de Substituição: {regra['Substituta']} recebe coletas de "
+                                    f"{grupo_economico_str if grupo_economico_str else 'qualquer grupo'} " # Adaptado para ficar mais parecido com o original
+                                    f"({modalidade_str}, {tipo_carga_str})"
+                                )
+                                if pd.notna(regra.get('Inicial')) and str(regra['Inicial']).strip() != '':
+                                    descricao_regra += f" ao invés de {regra['Inicial']}"
+                                
+                                # Formatação do Grupo Econômico para 4 dígitos com zeros à esquerda
+                                grupo_economico_formatado = None
+                                if grupo_economico_str is not None and str(grupo_economico_str).replace('.', '', 1).isdigit():
+                                    try:
+                                        grupo_economico_formatado = f"{int(float(grupo_economico_str)):04}"
+                                    except ValueError:
+                                        grupo_economico_formatado = grupo_economico_str # Em caso de erro, mantém o original
+
+                                resultados.append({
+                                    'Origem': municipio,
+                                    'Incoterm': incoterm,
+                                    'Tipo_Carga': tipo_carga,
+                                    'Filial': regra['Substituta'],
+                                    'Codigo_Filial': f"{int(cod_filial_subs):04}",
+                                    'KM_ID': None, # Regra de substituição não tem KM_ID diretamente
+                                    'Condicao_Atribuicao': descricao_regra,
+                                    'GRUPO ECONOMICO': grupo_economico_formatado # Usa o valor formatado
+                                })
+                        else:
+                            logger.info(f"Nenhuma regra de substituição aplicável para {municipio} ({incoterm}/{tipo_carga}).")
+                    else: # Se NENHUMA filial padrão for encontrada
                         # Se nenhuma filial padrão for encontrada, adiciona uma linha indicando isso
                         resultados.append({
                             'Origem': municipio,
@@ -299,57 +339,6 @@ if st.button("🚀 Rodar Roteirização"):
                             'GRUPO ECONOMICO': None
                         })
                         logger.warning(f"Nenhuma filial padrão encontrada para {municipio} ({incoterm}/{tipo_carga}).")
-
-                    # --- Agora, aplica as regras de substituição como resultados ADICIONAIS ---
-                    regras_subs = buscar_regras_substituicao_multiplas(
-                        df_grupos_final_validado, uf_municipio, incoterm, tipo_carga, grupo_economico_municipio
-                    )
-
-                    if not regras_subs.empty:
-                        for _, regra in regras_subs.iterrows():
-                            try:
-                                # Ajuste para garantir que 'Substituta' seja string antes da comparação
-                                cod_filial_subs = df_filiais[df_filiais['Filial'].astype(str) == str(regra['Substituta'])]['Codigo'].iloc[0]
-                                logger.info(f"Regra de substituição aplicável encontrada para {municipio} ({incoterm}/{tipo_carga}): Filial {regra['Substituta']} (Código: {int(cod_filial_subs):04}).")
-                            except IndexError:
-                                logger.warning(f"Código não encontrado para filial substituta {regra['Substituta']} para {municipio} ({incoterm}/{tipo_carga}). Usando '0000'.")
-                                cod_filial_subs = '0000'
-
-                            grupo_economico_str = str(regra['Grupo Economico']) if pd.notna(regra['Grupo Economico']) and str(regra['Grupo Economico']).strip() != '' else 'qualquer grupo'
-                            modalidade_str = regra['Modalidade'] if pd.notna(regra['Modalidade']) and str(regra['Modalidade']).strip() != '' else 'Todas as modalidades'
-                            tipo_carga_str = regra['Tipo de carga'] if pd.notna(regra['Tipo de carga']) and str(regra['Tipo de carga']).strip() != '' else 'Todos os tipos de carga'
-
-                            descricao_regra = (
-                                f"Regra de Substituição: {regra['Substituta']} recebe coletas de {grupo_economico_str} "
-                                f"({modalidade_str}, {tipo_carga_str})"
-                            )
-                            if pd.notna(regra.get('Inicial')) and str(regra['Inicial']).strip() != '':
-                                descricao_regra += f" ao invés de {regra['Inicial']}"
-                            
-                            # A coluna 'Data' foi removida das colunas esperadas, então não será processada aqui.
-                            # if pd.notna(regra.get('Data')):
-                            #     descricao_regra += f" (Regra de {regra['Data'].strftime('%d/%m/%Y')})"
-                            
-                            # Formatação do Grupo Econômico para 4 dígitos com zeros à esquerda
-                            grupo_economico_formatado = None
-                            if grupo_economico_str != 'qualquer grupo' and str(grupo_economico_str).replace('.', '', 1).isdigit():
-                                try:
-                                    grupo_economico_formatado = f"{int(float(grupo_economico_str)):04}"
-                                except ValueError:
-                                    grupo_economico_formatado = grupo_economico_str # Em caso de erro, mantém o original
-
-                            resultados.append({
-                                'Origem': municipio,
-                                'Incoterm': incoterm,
-                                'Tipo_Carga': tipo_carga,
-                                'Filial': regra['Substituta'],
-                                'Codigo_Filial': f"{int(cod_filial_subs):04}",
-                                'KM_ID': None, # Regra de substituição não tem KM_ID diretamente
-                                'Condicao_Atribuicao': descricao_regra,
-                                'GRUPO ECONOMICO': grupo_economico_formatado # Usa o valor formatado
-                            })
-                    else:
-                        logger.info(f"Nenhuma regra de substituição aplicável para {municipio} ({incoterm}/{tipo_carga}).")
 
                 except Exception as e:
                     logger.error(f"Erro processando {municipio} - {incoterm} - {tipo_carga}: {str(e)}")
@@ -364,8 +353,8 @@ if st.button("🚀 Rodar Roteirização"):
                         'GRUPO ECONOMICO': None
                     })
                     
-                percent_complete = min(100, int((i + 1) / total_municipios * 100))
-                my_bar.progress(percent_complete, text=f"{progress_text} {percent_complete}% Concluído.")
+            percent_complete = min(100, int((i + 1) / total_municipios * 100))
+            my_bar.progress(percent_complete, text=f"{progress_text} {percent_complete}% Concluído.")
                 
         my_bar.progress(100, text=f"{progress_text} 100% Concluído.")
 
