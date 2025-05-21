@@ -311,7 +311,7 @@ if st.button("🚀 Rodar Roteirização"):
 
             st.info("Log de processamento:")
             st.text_area("Visualizar Log", log_content, height=200) # Exibe o log na tela também
-            logger.info("Aplicação concluída.")import streamlit as st
+            logger.info("Aplicação concluída.")
 import pandas as pd
 import os
 import logging
