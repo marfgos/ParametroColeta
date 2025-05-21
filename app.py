@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import os
-from tqdm import tqdm
 import logging
 
 # Configuração de logging
@@ -15,6 +14,8 @@ dist_file = st.file_uploader("Upload da base de distâncias (municipios_distanci
 filial_file = st.file_uploader("Upload da base de filiais (filiais_geocodificadas.xlsx)", type=['xlsx'])
 param_file = st.file_uploader("Upload da base de parâmetros contratuais (parametros_contrato.xlsx)", type=['xlsx'])
 
+nome_arquivo = st.text_input("Nome do arquivo Excel para salvar o resultado (sem extensão)", "resultado_final")
+
 if st.button("Processar"):
 
     if dist_file and filial_file and param_file:
@@ -24,7 +25,6 @@ if st.button("Processar"):
         df_filiais = pd.read_excel(filial_file)
         df_grupos = pd.read_excel(param_file)
 
-        # Tipos de Incoterm e carga
         modalidades = [
             ("FCA", "Fracionado", "FCA/Fracionado"),
             ("FCA", "Lotação", "FCA/Lotação"),
@@ -171,12 +171,22 @@ if st.button("Processar"):
 
         df_resultado = pd.DataFrame(resultados)
 
-        # Salvar resultado
-        saida_path = os.path.join(os.path.expanduser("~"), "resultado_final.xlsx")
-        df_resultado.to_excel(saida_path, index=False)
+        # Caminho para salvar
+        nome_completo = f"{nome_arquivo}.xlsx"
+        df_resultado.to_excel(nome_completo, index=False)
 
         st.success("Processo concluído!")
-        st.write(f"Resultado salvo em: {saida_path}")
+
+        # Botão para download direto
+        with open(nome_completo, "rb") as f:
+            dados = f.read()
+            st.download_button(
+                label="Download do arquivo Excel",
+                data=dados,
+                file_name=nome_completo,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
         st.write(f"Log de erros salvo em: {os.path.abspath(log_file)}")
 
     else:
