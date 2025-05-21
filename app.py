@@ -43,14 +43,20 @@ else:
     df_grupos = pd.DataFrame(columns=colunas_base)
 
 # === EDIÇÃO INTERATIVA DOS PARÂMETROS ===
-df_grupos_editado = st.data_editor(df_grupos, num_rows="dynamic", use_container_width=True, key="regras_editadas")
+df_grupos_editado = st.data_editor(
+    df_grupos,
+    num_rows="dynamic",
+    use_container_width=True,
+    key="regras_editadas"
+)
 
-# === SALVAR ALTERAÇÕES NO ARQUIVO ===
-try:
-    df_grupos_editado.to_excel(CAMINHO_PARAMETROS, index=False)
-    st.success("💾 Alterações salvas com sucesso no repositório!")
-except Exception as e:
-    st.error(f"Erro ao salvar alterações: {e}")
+# === BOTÃO PARA SALVAR OS PARÂMETROS ===
+if st.button("📤 Enviar alterações"):
+    try:
+        df_grupos_editado.to_excel(CAMINHO_PARAMETROS, index=False)
+        st.success("💾 Alterações salvas com sucesso no repositório!")
+    except Exception as e:
+        st.error(f"Erro ao salvar alterações: {e}")
 
 st.divider()
 
