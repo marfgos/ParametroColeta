@@ -193,7 +193,6 @@ if st.button("💾 Salvar minhas Regras (Usuário)"):
             st.success("✅ Suas regras foram salvas com sucesso!")
             st.warning("⚠️ Em ambientes de nuvem (como Streamlit Community Cloud), as alterações podem ser perdidas após o reinício do aplicativo.")
             logger.info("Regras do usuário salvas com sucesso.")
-            st.experimental_rerun()
         else:
             st.error("❌ Nenhuma regra válida para salvar. As colunas 'Substituta', 'Recebe' e 'UF' são obrigatórias e não podem estar vazias.")
 
