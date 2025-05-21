@@ -6,18 +6,24 @@ from tqdm import tqdm
 from io import BytesIO
 
 st.set_page_config(page_title="Roteirização com Substituição", layout="wide")
-
-# === CONFIGURAÇÕES ===
 st.title("📦 Roteirização com Regras de Substituição")
+
+# === CONFIGURAÇÃO DE LOG ===
 log_file = 'log_filiais_proximas.log'
 logging.basicConfig(filename=log_file, level=logging.INFO, format='%(asctime)s - %(message)s')
 
-# === UPLOAD DE ARQUIVOS ===
-st.header("📥 Upload de Arquivos")
+# === CARREGAMENTO DAS BASES FIXAS INTERNAS ===
+try:
+    df_dist = pd.read_excel("data/municipios_distanciasreais.xlsx")
+    df_filiais = pd.read_excel("data/filiais_geocodificadas.xlsx")
+    st.success("📍 Bases internas de distâncias e filiais carregadas com sucesso.")
+except Exception as e:
+    st.error(f"❌ Erro ao carregar arquivos internos: {e}")
+    st.stop()
 
-dist_path = st.file_uploader("1. Distâncias reais (municipios_distanciasreais.xlsx)", type=["xlsx"])
-filial_path = st.file_uploader("2. Filiais geocodificadas (filiais_geocodificadas.xlsx)", type=["xlsx"])
-grupo_economico_file = st.file_uploader("3. Regras de Substituição (parametros_contrato.xlsx)", type=["xlsx"], help="Ou edite a base manualmente abaixo.")
+# === UPLOAD DA BASE VARIÁVEL ===
+st.header("📥 Parâmetros Contratuais")
+grupo_economico_file = st.file_uploader("1. Parâmetros contratuais (parametros_contrato.xlsx)", type=["xlsx"], help="Ou edite a base manualmente abaixo.")
 
 # === MODELO DE BASE DE SUBSTITUIÇÃO ===
 colunas_base = ['Substituta', 'Inicial', 'Recebe', 'UF', 'Grupo Economico', 'Modalidade', 'Tipo de carga']
@@ -30,18 +36,14 @@ else:
     df_grupos = pd.DataFrame(columns=colunas_base)
 
 df_grupos_editado = st.data_editor(df_grupos, num_rows="dynamic", use_container_width=True, key="regras_editadas")
-
 st.divider()
 
 # === BOTÃO PARA PROCESSAR ===
 if st.button("🚀 Rodar Roteirização"):
-    if not dist_path or not filial_path:
-        st.error("Por favor, envie os arquivos de distâncias e filiais.")
+    if grupo_economico_file is None and df_grupos_editado.empty:
+        st.error("Por favor, envie os parâmetros contratuais ou edite a base manualmente.")
     else:
         with st.spinner("Processando..."):
-            # Carregar dados
-            df_dist = pd.read_excel(dist_path)
-            df_filiais = pd.read_excel(filial_path)
             df_grupos = df_grupos_editado.copy()
 
             modalidades = [
