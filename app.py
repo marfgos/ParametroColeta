@@ -4,6 +4,7 @@ import os
 import logging
 from io import BytesIO, StringIO
 import zipfile
+import datetime # Importa datetime para pd.Timestamp.now()
 
 # === CONFIGURAÇÕES INICIAIS DO STREAMLIT (DEVE SER A PRIMEIRA COISA APÓS OS IMPORTS) ===
 st.set_page_config(page_title="Roteirização com Substituição", layout="wide")
@@ -111,8 +112,8 @@ except FileNotFoundError:
         else:
             df_padrao_parametros[col].fillna('', inplace=True)
 except Exception as e:
-    st.error(f"Erro ao carregar o arquivo de parâmetros padrão '{CAMINHO_PARAMETROS_PADRAO}': {e}")
-    logger.error(f"Erro ao carregar o arquivo de parâmetros padrão '{CAMINHO_PARAMETROS_PADRAO}': {e}")
+    st.error(f"Erro ao carregar o arquivo de parâmetros padrão '{CAMINHO_PARAMETROS_PADRÃO}': {e}")
+    logger.error(f"Erro ao carregar o arquivo de parâmetros padrão '{CAMINHO_PARAMETROS_PADRÃO}': {e}")
     df_padrao_parametros = pd.DataFrame(columns=list(colunas_base_parametros.keys()))
     for col, dtype in colunas_base_parametros.items():
         df_padrao_parametros[col] = pd.Series(dtype=dtype)
@@ -302,6 +303,10 @@ if st.button("🚀 Rodar Roteirização"):
                 df_usuario_processed[col].fillna('', inplace=True)
 
     # Concatene as bases padrão e do usuário.
+    # Adicionamos uma coluna de origem para distinguir as regras, se necessário no futuro.
+    df_padrao_parametros['Origem_Regra'] = 'Padrao'
+    df_usuario_processed['Origem_Regra'] = 'Usuario'
+    
     df_grupos_final = pd.concat([df_padrao_parametros, df_usuario_processed.dropna(how='all')], ignore_index=True)
 
     logger.info("Bases de parâmetros padrão e do usuário concatenadas para processamento.")
@@ -349,52 +354,33 @@ if st.button("🚀 Rodar Roteirização"):
             ("EXW", "Fracionado", "EXW/Fracionado"),
             ("EXW", "Lotação", "EXW/Lotação")
         ]
-
-        def buscar_melhor_regra_substituicao(df_regras_concat, uf, modalidade, tipo_carga, grupo_economico_origem=None):
-            # Filtra regras que correspondem aos critérios básicos (UF, Recebe='S', Modalidade e Tipo de Carga)
-            # Regras com Modalidade/Tipo de Carga vazios se aplicam a todas
+        
+        # --- FUNÇÃO MODIFICADA PARA BUSCAR REGRAS DE SUBSTITUIÇÃO (RETORNA TODAS AS APLICÁVEIS) ---
+        def buscar_regras_substituicao_multiplas(df_regras_concat, uf, modalidade, tipo_carga, grupo_economico_origem=None):
             regras_aplicaveis = df_regras_concat[
                 (df_regras_concat['UF'] == uf) &
-                (df_regras_concat['Recebe'] == 'S') &
-                (df_regras_concat['Modalidade'].isin(['', modalidade])) &
-                (df_regras_concat['Tipo de carga'].isin(['', tipo_carga]))
-            ].copy() # Use .copy() para evitar SettingWithCopyWarning
+                (df_regras_concat['Recebe'] == 'S')
+            ].copy()
 
-            # Se houver um grupo econômico de origem, filtre também por ele.
-            # Regras com 'Grupo Economico' vazio se aplicam a qualquer grupo.
+            # Filtro para Modalidade e Tipo de Carga (vazio significa "qualquer")
+            regras_aplicaveis = regras_aplicaveis[
+                (regras_aplicaveis['Modalidade'].isin(['', modalidade])) &
+                (regras_aplicaveis['Tipo de carga'].isin(['', tipo_carga]))
+            ]
+            
+            # Filtro para Grupo Economico (vazio significa "qualquer")
+            # Se grupo_economico_origem não for vazio, busca por regras com esse grupo OU regras sem grupo especificado.
+            # Se grupo_economico_origem for vazio, busca APENAS regras sem grupo especificado.
             if grupo_economico_origem and str(grupo_economico_origem).strip() != '':
                 regras_aplicaveis = regras_aplicaveis[
                     (regras_aplicaveis['Grupo Economico'] == '') |
                     (regras_aplicaveis['Grupo Economico'] == grupo_economico_origem)
                 ]
-            else: # Se não houver grupo econômico de origem (ou for vazio), só considere regras sem grupo econômico especificado
+            else:
                 regras_aplicaveis = regras_aplicaveis[regras_aplicaveis['Grupo Economico'] == '']
 
-
-            if regras_aplicaveis.empty:
-                return pd.Series() # Retorna uma Series vazia se nenhuma regra for encontrada
-
-            # Lógica para priorizar:
-            # 1. Mais específica (mais critérios preenchidos: Grupo Economico > Tipo de Carga > Modalidade > Inicial)
-            # 2. Mais recente (coluna 'Data')
-            # 3. Se tudo empatar, usar o índice original (para consistência)
-
-            # Pontuação de especificidade (ajuste os pesos conforme sua necessidade)
-            regras_aplicaveis['specificity_score'] = 0
-            regras_aplicaveis['specificity_score'] += regras_aplicaveis['Grupo Economico'].apply(lambda x: 4 if str(x).strip() != '' else 0)
-            regras_aplicaveis['specificity_score'] += regras_aplicaveis['Tipo de carga'].apply(lambda x: 3 if str(x).strip() != '' else 0)
-            regras_aplicaveis['specificity_score'] += regras_aplicaveis['Modalidade'].apply(lambda x: 2 if str(x).strip() != '' else 0)
-            regras_aplicaveis['specificity_score'] += regras_aplicaveis['Inicial'].apply(lambda x: 1 if str(x).strip() != '' else 0)
-
-            # Ordena por especificidade (descendente) e depois por Data (descendente)
-            # Regras sem data (NaT) virão por último em sort descendente.
-            # Adiciona o índice original para desempate final e consistência.
-            regras_aplicaveis = regras_aplicaveis.sort_values(
-                by=['specificity_score', 'Data', regras_aplicaveis.index.name if regras_aplicaveis.index.name else regras_aplicaveis.index],
-                ascending=[False, False, True] # Mais específico, mais recente, menor índice
-            )
-
-            return regras_aplicaveis.iloc[0] # Retorna a regra de maior prioridade
+            return regras_aplicaveis
+        # --- FIM DA FUNÇÃO MODIFICADA ---
 
         municipios = df_dist['MunicipioOrigem'].unique()
         total_municipios = len(municipios)
@@ -405,81 +391,35 @@ if st.button("🚀 Rodar Roteirização"):
             
             # ATENÇÃO: Se o Grupo Econômico for uma característica do município de origem,
             # você precisaria carregá-lo aqui (ex: de df_dist ou outra base).
-            # Por exemplo:
-            # grupo_economico_municipio = df_dist[df_dist['MunicipioOrigem'] == municipio]['GrupoEconomico'].iloc[0]
             grupo_economico_municipio = None # Mantenha None se você não tem essa informação por município
 
             for incoterm, tipo_carga, coluna_param in modalidades:
                 try:
-                    filial_encontrada = False
+                    filial_encontrada_padrao = False
+                    mais_proxima = None # Variável para armazenar a filial padrão encontrada
+                    cod_filial_padrao = None
+                    condicao_padrao = None
 
-                    # Busca a melhor regra aplicando a nova função
-                    regra = buscar_melhor_regra_substituicao(df_grupos_final_validado, uf_municipio, incoterm, tipo_carga, grupo_economico_municipio)
+                    # --- Lógica de Atribuição Padrão (Prioridades do segundo script) ---
 
-                    if not regra.empty:
-                        # Certifica que Grupo Economico é uma string ou None
-                        grupo_economico_str = str(regra['Grupo Economico']) if pd.notna(regra['Grupo Economico']) and str(regra['Grupo Economico']).strip() != '' else None
-
-                        try:
-                            cod_filial_subs = df_filiais[df_filiais['Filial'].astype(str) == str(regra['Substituta'])]['Codigo'].iloc[0]
-                            logger.info(f"Regra de substituição aplicada para {municipio} ({incoterm}/{tipo_carga}): Filial {regra['Substituta']} (Código: {int(cod_filial_subs):04}).")
-                        except IndexError:
-                            logger.warning(f"Código não encontrado para filial substituta {regra['Substituta']} para {municipio} ({incoterm}/{tipo_carga}). Usando '0000'.")
-                            cod_filial_subs = '0000'
-
-                        descricao_regra = (
-                            f"Regra de Substituição: {regra['Substituta']} recebe coletas de {grupo_economico_str if grupo_economico_str else 'qualquer grupo'} "
-                            f"({regra['Modalidade'] if pd.notna(regra['Modalidade']) and str(regra['Modalidade']).strip() != '' else 'Todas modalidades'}, "
-                            f"{regra['Tipo de carga'] if pd.notna(regra['Tipo de carga']) and str(regra['Tipo de carga']).strip() != '' else 'Todos os tipos de carga'})"
-                        )
-                        if pd.notna(regra.get('Inicial')) and str(regra['Inicial']).strip() != '':
-                            descricao_regra += f" ao invés de {regra['Inicial']}"
+                    # 1. Filial compatível com a modalidade (mais próxima)
+                    filiais_ativas = df_filiais[df_filiais[coluna_param] == "S"]
+                    if not filiais_ativas.empty:
+                        dist_filiais = df_dist[
+                            (df_dist['MunicipioOrigem'] == municipio) &
+                            (df_dist['Filial'].isin(filiais_ativas['Filial']))
+                        ]
+                        dist_filiais_validas = dist_filiais[dist_filiais['KM_ID'].notna()]
                         
-                        # Adicionar a data da regra à descrição, se existir
-                        if pd.notna(regra.get('Data')):
-                             descricao_regra += f" (Regra de {regra['Data'].strftime('%d/%m/%Y')})"
+                        if not dist_filiais_validas.empty:
+                            mais_proxima = dist_filiais_validas.loc[dist_filiais_validas['KM_ID'].idxmin()]
+                            cod_filial_padrao = df_filiais[df_filiais['Filial'] == mais_proxima['Filial']]['Codigo'].values[0]
+                            filial_encontrada_padrao = True
+                            condicao_padrao = "Filial compatível com a modalidade"
+                            logger.info(f"Filial compatível com modalidade encontrada para {municipio} ({incoterm}/{tipo_carga}): {mais_proxima['Filial']} (KM_ID: {mais_proxima['KM_ID']}).")
 
-
-                        resultados.append({
-                            'Origem': municipio,
-                            'Incoterm': incoterm,
-                            'Tipo_Carga': tipo_carga,
-                            'Filial': regra['Substituta'],
-                            'Codigo_Filial': f"{int(cod_filial_subs):04}",
-                            'KM_ID': None,
-                            'Condicao_Atribuicao': descricao_regra,
-                            # A coluna 'GRUPO ECONOMICO' no resultado é o grupo da REGRA, não o do município.
-                            # Se você precisar do grupo do município aqui, ele deve ser passado como `grupo_economico_municipio`
-                            'GRUPO ECONOMICO': f"{int(float(grupo_economico_str)):04}" if grupo_economico_str and str(grupo_economico_str).replace('.', '', 1).isdigit() else None
-                        })
-                        filial_encontrada = True
-
-                    if not filial_encontrada:
-                        filiais_ativas = df_filiais[df_filiais[coluna_param] == "S"]
-                        if not filiais_ativas.empty:
-                            dist_filiais = df_dist[
-                                (df_dist['MunicipioOrigem'] == municipio) &
-                                (df_dist['Filial'].isin(filiais_ativas['Filial']))
-                            ]
-                            dist_filiais_validas = dist_filiais[dist_filiais['KM_ID'].notna()]
-                            if not dist_filiais_validas.empty:
-                                mais_proxima = dist_filiais_validas.loc[dist_filiais_validas['KM_ID'].idxmin()]
-                                cod_filial = df_filiais[df_filiais['Filial'] == mais_proxima['Filial']]['Codigo'].values[0]
-                                resultados.append({
-                                    'Origem': municipio,
-                                    'Incoterm': incoterm,
-                                    'Tipo_Carga': tipo_carga,
-                                    'Filial': mais_proxima['Filial'],
-                                    'Codigo_Filial': f"{int(cod_filial):04}",
-                                    'KM_ID': mais_proxima['KM_ID'],
-                                    'Condicao_Atribuicao': "Filial compatível com a modalidade",
-                                    'GRUPO ECONOMICO': None
-                                })
-                                filial_encontrada = True
-                                logger.info(f"Filial compatível com modalidade encontrada para {municipio} ({incoterm}/{tipo_carga}): {mais_proxima['Filial']} (KM_ID: {mais_proxima['KM_ID']}).")
-
-
-                    if not filial_encontrada:
+                    # 2. Única filial no estado (se ainda não encontrou)
+                    if not filial_encontrada_padrao:
                         filiais_uf = df_filiais[df_filiais['UF'] == uf_municipio]
                         if len(filiais_uf) == 1:
                             filial_unica = filiais_uf.iloc[0]
@@ -489,41 +429,36 @@ if st.button("🚀 Rodar Roteirização"):
                             ]
                             if not dist_filial.empty and pd.notna(dist_filial['KM_ID'].iloc[0]):
                                 mais_proxima = dist_filial.iloc[0]
-                                cod_filial = filial_unica['Codigo']
-                                resultados.append({
-                                    'Origem': municipio,
-                                    'Incoterm': incoterm,
-                                    'Tipo_Carga': tipo_carga,
-                                    'Filial': filial_unica['Filial'],
-                                    'Codigo_Filial': f"{int(cod_filial):04}",
-                                    'KM_ID': mais_proxima['KM_ID'],
-                                    'Condicao_Atribuicao': "Filial única no estado",
-                                    'GRUPO ECONOMICO': None
-                                })
-                                filial_encontrada = True
+                                cod_filial_padrao = filial_unica['Codigo']
+                                filial_encontrada_padrao = True
+                                condicao_padrao = "Filial única no estado"
                                 logger.info(f"Filial única no estado encontrada para {municipio} ({incoterm}/{tipo_carga}): {filial_unica['Filial']} (KM_ID: {mais_proxima['KM_ID']}).")
 
-
-                    if not filial_encontrada:
+                    # 3. Filial mais próxima independente de tudo (se ainda não encontrou)
+                    if not filial_encontrada_padrao:
                         dist_filiais = df_dist[df_dist['MunicipioOrigem'] == municipio]
                         dist_filiais_validas = dist_filiais[dist_filiais['KM_ID'].notna()]
                         if not dist_filiais_validas.empty:
                             mais_proxima = dist_filiais_validas.loc[dist_filiais_validas['KM_ID'].idxmin()]
-                            cod_filial = df_filiais[df_filiais['Filial'] == mais_proxima['Filial']]['Codigo'].values[0]
-                            resultados.append({
-                                'Origem': municipio,
-                                'Incoterm': incoterm,
-                                'Tipo_Carga': tipo_carga,
-                                'Filial': mais_proxima['Filial'],
-                                'Codigo_Filial': f"{int(cod_filial):04}",
-                                'KM_ID': mais_proxima['KM_ID'],
-                                'Condicao_Atribuicao': "Filial mais próxima (sem restrição)",
-                                'GRUPO ECONOMICO': None
-                            })
-                            filial_encontrada = True
+                            cod_filial_padrao = df_filiais[df_filiais['Filial'] == mais_proxima['Filial']]['Codigo'].values[0]
+                            filial_encontrada_padrao = True
+                            condicao_padrao = "Filial mais próxima (sem restrição)"
                             logger.info(f"Filial mais próxima (sem restrição) encontrada para {municipio} ({incoterm}/{tipo_carga}): {mais_proxima['Filial']} (KM_ID: {mais_proxima['KM_ID']}).")
 
-                    if not filial_encontrada:
+                    # --- Adiciona o resultado padrão (se encontrado) ---
+                    if filial_encontrada_padrao:
+                        resultados.append({
+                            'Origem': municipio,
+                            'Incoterm': incoterm,
+                            'Tipo_Carga': tipo_carga,
+                            'Filial': mais_proxima['Filial'],
+                            'Codigo_Filial': f"{int(cod_filial_padrao):04}",
+                            'KM_ID': mais_proxima['KM_ID'],
+                            'Condicao_Atribuicao': condicao_padrao,
+                            'GRUPO ECONOMICO': None # Grupo Econômico é da regra, não da atribuição padrão
+                        })
+                    else:
+                        # Se nenhuma filial padrão for encontrada, adiciona uma linha indicando isso
                         resultados.append({
                             'Origem': municipio,
                             'Incoterm': incoterm,
@@ -531,10 +466,51 @@ if st.button("🚀 Rodar Roteirização"):
                             'Filial': None,
                             'Codigo_Filial': None,
                             'KM_ID': None,
-                            'Condicao_Atribuicao': "Sem filial disponível",
+                            'Condicao_Atribuicao': "Sem filial disponível (Padrão)",
                             'GRUPO ECONOMICO': None
                         })
-                        logger.warning(f"Nenhuma filial encontrada para {municipio} ({incoterm}/{tipo_carga}).")
+                        logger.warning(f"Nenhuma filial padrão encontrada para {municipio} ({incoterm}/{tipo_carga}).")
+
+                    # --- Agora, aplica as regras de substituição como resultados ADICIONAIS ---
+                    regras_subs = buscar_regras_substituicao_multiplas(
+                        df_grupos_final_validado, uf_municipio, incoterm, tipo_carga, grupo_economico_municipio
+                    )
+
+                    if not regras_subs.empty:
+                        for _, regra in regras_subs.iterrows():
+                            try:
+                                cod_filial_subs = df_filiais[df_filiais['Filial'].astype(str) == str(regra['Substituta'])]['Codigo'].iloc[0]
+                                logger.info(f"Regra de substituição aplicável encontrada para {municipio} ({incoterm}/{tipo_carga}): Filial {regra['Substituta']} (Código: {int(cod_filial_subs):04}).")
+                            except IndexError:
+                                logger.warning(f"Código não encontrado para filial substituta {regra['Substituta']} para {municipio} ({incoterm}/{tipo_carga}). Usando '0000'.")
+                                cod_filial_subs = '0000'
+
+                            grupo_economico_str = str(regra['Grupo Economico']) if pd.notna(regra['Grupo Economico']) and str(regra['Grupo Economico']).strip() != '' else 'qualquer grupo'
+                            modalidade_str = regra['Modalidade'] if pd.notna(regra['Modalidade']) and str(regra['Modalidade']).strip() != '' else 'Todas modalidades'
+                            tipo_carga_str = regra['Tipo de carga'] if pd.notna(regra['Tipo de carga']) and str(regra['Tipo de carga']).strip() != '' else 'Todos os tipos de carga'
+
+                            descricao_regra = (
+                                f"Regra de Substituição: {regra['Substituta']} recebe coletas de {grupo_economico_str} "
+                                f"({modalidade_str}, {tipo_carga_str})"
+                            )
+                            if pd.notna(regra.get('Inicial')) and str(regra['Inicial']).strip() != '':
+                                descricao_regra += f" ao invés de {regra['Inicial']}"
+                            
+                            if pd.notna(regra.get('Data')):
+                                descricao_regra += f" (Regra de {regra['Data'].strftime('%d/%m/%Y')})"
+                            
+                            resultados.append({
+                                'Origem': municipio,
+                                'Incoterm': incoterm,
+                                'Tipo_Carga': tipo_carga,
+                                'Filial': regra['Substituta'],
+                                'Codigo_Filial': f"{int(cod_filial_subs):04}",
+                                'KM_ID': None, # Regra de substituição não tem KM_ID diretamente
+                                'Condicao_Atribuicao': descricao_regra,
+                                'GRUPO ECONOMICO': f"{int(float(grupo_economico_str)):04}" if grupo_economico_str != 'qualquer grupo' and str(grupo_economico_str).replace('.', '', 1).isdigit() else None
+                            })
+                    else:
+                        logger.info(f"Nenhuma regra de substituição aplicável para {municipio} ({incoterm}/{tipo_carga}).")
 
                 except Exception as e:
                     logger.error(f"Erro processando {municipio} - {incoterm} - {tipo_carga}: {str(e)}")
@@ -548,7 +524,7 @@ if st.button("🚀 Rodar Roteirização"):
                         'Condicao_Atribuicao': "Erro de processamento",
                         'GRUPO ECONOMICO': None
                     })
-            
+                    
             percent_complete = min(100, int((i + 1) / total_municipios * 100))
             my_bar.progress(percent_complete, text=f"{progress_text} {percent_complete}% Concluído.")
             
