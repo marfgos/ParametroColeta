@@ -1,54 +1,57 @@
 import streamlit as st
 import pandas as pd
 import os
+from io import BytesIO
 
-st.set_page_config(page_title="Parâmetros de Coleta", layout="wide")
-
-st.title("📦 Configuração de Parâmetros de Coleta")
-
-# =========================
-# 📁 ARQUIVOS INTERNOS
-# =========================
-
-# Arquivos internos
-arquivo_base_padrao = "parametros_contrato.xlsx"
-arquivo_parametros_usuario = "parametros_usuario.xlsx"
+st.set_page_config(page_title="Roteirização com Parâmetros de Contrato", layout="wide")
+st.title("📦 Roteirização com Parâmetros de Contrato")
 
 # =========================
-# 🧾 CARREGAR BASE PADRÃO
+# 📁 UPLOAD DAS BASES
 # =========================
-try:
-    df_padrao = pd.read_excel(arquivo_base_padrao)
-except Exception as e:
-    st.error(f"Erro ao carregar a base padrão: {e}")
-    df_padrao = pd.DataFrame()
+
+st.header("📥 Upload das Bases Necessárias")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    dist_file = st.file_uploader("Base de Distâncias (municipios_distanciasreais.xlsx)", type=["xlsx"], key="dist")
+with col2:
+    filiais_file = st.file_uploader("Base de Filiais (filiais_geocodificadas.xlsx)", type=["xlsx"], key="filiais")
+with col3:
+    parametros_file = st.file_uploader("Parâmetros de Contrato (parametros_contrato.xlsx)", type=["xlsx"], key="parametros")
+
+# Verifica se todos os arquivos foram carregados
+if not all([dist_file, filiais_file, parametros_file]):
+    st.warning("Por favor, carregue todas as bases necessárias para continuar.")
+    st.stop()
+
+# Leitura das bases
+df_dist = pd.read_excel(dist_file)
+df_filiais = pd.read_excel(filiais_file)
+df_parametros = pd.read_excel(parametros_file)
+
+st.success("✅ Bases carregadas com sucesso!")
 
 # =========================
-# 📁 CARREGAR BASE DO USUÁRIO
+# ➕ ADIÇÃO DE NOVOS PARÂMETROS
 # =========================
-if os.path.exists(arquivo_parametros_usuario):
-    df_usuario = pd.read_excel(arquivo_parametros_usuario)
-else:
-    df_usuario = pd.DataFrame(columns=df_padrao.columns)
 
-# =========================
-# ➕ FORMULÁRIO PARA NOVA REGRA
-# =========================
-st.markdown("## ➕ Adicionar Nova Regra de Redirecionamento")
+st.header("➕ Adicionar Novo Parâmetro de Contrato")
 
-with st.form("form_nova_regra"):
+with st.form("form_novo_parametro"):
     col1, col2 = st.columns(2)
     with col1:
         substituta = st.text_input("Substituta")
         inicial = st.text_input("Inicial")
-        recebe = st.text_input("Recebe")
+        recebe = st.selectbox("Recebe", ["S", "N"])
         uf = st.text_input("UF")
     with col2:
         grupo = st.text_input("Grupo Econômico")
         modalidade = st.selectbox("Modalidade", ["", "FCA", "EXW"])
         tipo = st.selectbox("Tipo de Carga", ["", "Fracionado", "Lotação"])
 
-    submitted = st.form_submit_button("✅ Adicionar Regra")
+    submitted = st.form_submit_button("✅ Adicionar Parâmetro")
 
 if submitted:
     nova_regra = {
@@ -61,14 +64,28 @@ if submitted:
         'Tipo de carga': tipo
     }
 
-    df_usuario = pd.concat([df_usuario, pd.DataFrame([nova_regra])], ignore_index=True)
-    df_usuario.to_excel(arquivo_parametros_usuario, index=False)
-    st.success("✅ Regra adicionada com sucesso! Ela será usada nas próximas execuções.")
+    df_nova_regra = pd.DataFrame([nova_regra])
+    df_parametros = pd.concat([df_parametros, df_nova_regra], ignore_index=True)
+    st.success("✅ Novo parâmetro adicionado com sucesso!")
 
 # =========================
-# 🔗 BASE FINAL UNIFICADA
+# 🚀 PROCESSAMENTO
 # =========================
-df_completo = pd.concat([df_padrao, df_usuario], ignore_index=True)
 
-st.markdown("### 📄 Base Final de Regras (Internas + Usuário)")
-st.dataframe(df_completo, use_container_width=True)
+st.header("🚀 Processamento")
+
+if st.button("Iniciar Processamento"):
+    # Aqui você deve inserir a lógica de processamento utilizando:
+    # df_dist, df_filiais e df_parametros
+
+    # Exemplo de exibição das bases
+    st.subheader("📄 Base de Distâncias")
+    st.dataframe(df_dist)
+
+    st.subheader("🏢 Base de Filiais")
+    st.dataframe(df_filiais)
+
+    st.subheader("📑 Parâmetros de Contrato (Incluindo Novos)")
+    st.dataframe(df_parametros)
+
+    st.success("✅ Processamento concluído!")
