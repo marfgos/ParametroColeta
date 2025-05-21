@@ -22,7 +22,16 @@ CAMINHO_PARAMETROS_PADRAO = "parametros_contrato.xlsx"
 CAMINHO_PARAMETETROS_USUARIO = "parametros_usuario.xlsx"
 
 # Colunas esperadas para as bases de parâmetros
-colunas_base_parametros = ['Substituta', 'Inicial', 'Recebe', 'UF', 'Grupo Economico', 'Modalidade', 'Tipo de carga']
+# Definindo os tipos para melhor compatibilidade com st.data_editor
+colunas_base_parametros = {
+    'Substituta': str,
+    'Inicial': str,
+    'Recebe': str,
+    'UF': str,
+    'Grupo Economico': str, # Pode ser string para códigos que começam com zero ou mistos
+    'Modalidade': str,
+    'Tipo de carga': str
+}
 
 # === CARREGAMENTO DAS BASES FIXAS INTERNAS (Distâncias e Filiais) ===
 try:
@@ -36,9 +45,9 @@ except Exception as e:
     st.stop()
 
 # --- Extrair lista de filiais para os Selectbox ---
-# Certifica-se de que a coluna 'Filial' existe e pega os valores únicos, ordenados
 if 'Filial' in df_filiais.columns:
-    lista_filiais = [''] + sorted(df_filiais['Filial'].unique().tolist()) # Adiciona uma opção vazia
+    # Garante que a lista contenha strings e ordena
+    lista_filiais = [''] + sorted(df_filiais['Filial'].astype(str).unique().tolist())
 else:
     lista_filiais = ['']
     st.warning("Coluna 'Filial' não encontrada em 'filiais_geocodificadas.xlsx'. Dropdowns de Filial podem não funcionar.")
@@ -48,16 +57,32 @@ else:
 st.header("📄 Parâmetros Contratuais Padrão")
 try:
     df_padrao_parametros = pd.read_excel(CAMINHO_PARAMETROS_PADRAO)
+    # Garante que as colunas do df_padrao_parametros tenham os tipos esperados
+    for col, dtype in colunas_base_parametros.items():
+        if col in df_padrao_parametros.columns:
+            df_padrao_parametros[col] = df_padrao_parametros[col].astype(dtype).fillna('') # Preenche NaN com string vazia
+        else: # Adiciona coluna se não existir, com tipo correto e valores vazios
+            df_padrao_parametros[col] = pd.Series(dtype=dtype)
+            df_padrao_parametros[col].fillna('', inplace=True)
+
     st.info(f"Parâmetros contratuais padrão carregados de '{CAMINHO_PARAMETROS_PADRAO}'.")
     logger.info(f"Parâmetros contratuais padrão carregados de '{CAMINHO_PARAMETROS_PADRAO}'.")
 except FileNotFoundError:
     st.warning(f"Arquivo '{CAMINHO_PARAMETROS_PADRAO}' não encontrado. Criando DataFrame padrão vazio.")
-    logger.warning(f"Arquivo '{CAMINHO_PARAMETROS_PADRAO}' não encontrado. Criando DataFrame padrão vazio.")
-    df_padrao_parametros = pd.DataFrame(columns=colunas_base_parametros)
+    logger.warning(f"Arquivo '{CAMINHO_PARAMETROS_PADRÃO}' não encontrado. Criando DataFrame padrão vazio.")
+    # Cria DataFrame vazio com os dtypes corretos
+    df_padrao_parametros = pd.DataFrame(columns=list(colunas_base_parametros.keys()))
+    for col, dtype in colunas_base_parametros.items():
+        df_padrao_parametros[col] = pd.Series(dtype=dtype)
+        df_padrao_parametros[col].fillna('', inplace=True) # Preenche NaN com string vazia
 except Exception as e:
     st.error(f"Erro ao carregar o arquivo de parâmetros padrão '{CAMINHO_PARAMETROS_PADRAO}': {e}")
     logger.error(f"Erro ao carregar o arquivo de parâmetros padrão '{CAMINHO_PARAMETROS_PADRAO}': {e}")
-    df_padrao_parametros = pd.DataFrame(columns=colunas_base_parametros)
+    # Cria DataFrame vazio com os dtypes corretos em caso de erro
+    df_padrao_parametros = pd.DataFrame(columns=list(colunas_base_parametros.keys()))
+    for col, dtype in colunas_base_parametros.items():
+        df_padrao_parametros[col] = pd.Series(dtype=dtype)
+        df_padrao_parametros[col].fillna('', inplace=True) # Preenche NaN com string vazia
 
 st.dataframe(df_padrao_parametros, use_container_width=True, height=200)
 st.divider()
@@ -65,16 +90,29 @@ st.divider()
 # === CARREGAMENTO E EDIÇÃO DA BASE DE PARÂMETROS DO USUÁRIO ===
 st.header("✏️ Parâmetros Contratuais do Usuário (Editável)")
 
-df_grupos_usuario = pd.DataFrame(columns=colunas_base_parametros)
+# Inicializa o DataFrame do usuário com os dtypes corretos
+df_grupos_usuario = pd.DataFrame(columns=list(colunas_base_parametros.keys()))
+for col, dtype in colunas_base_parametros.items():
+    df_grupos_usuario[col] = pd.Series(dtype=dtype)
+    df_grupos_usuario[col].fillna('', inplace=True) # Preenche NaN com string vazia
+
 if os.path.exists(CAMINHO_PARAMETETROS_USUARIO):
     try:
-        df_grupos_usuario = pd.read_excel(CAMINHO_PARAMETETROS_USUARIO)
+        df_loaded = pd.read_excel(CAMINHO_PARAMETETROS_USUARIO)
+        # Aplica os tipos corretos ao DataFrame carregado
+        for col, dtype in colunas_base_parametros.items():
+            if col in df_loaded.columns:
+                df_loaded[col] = df_loaded[col].astype(dtype).fillna('')
+            else: # Adiciona coluna se não existir, com tipo correto e valores vazios
+                df_loaded[col] = pd.Series(dtype=dtype)
+                df_loaded[col].fillna('', inplace=True)
+        df_grupos_usuario = df_loaded # Atribui o DataFrame carregado e tipado
         st.info(f"Parâmetros do usuário carregados de '{CAMINHO_PARAMETETROS_USUARIO}'.")
         logger.info(f"Parâmetros do usuário carregados de '{CAMINHO_PARAMETETROS_USUARIO}'.")
     except Exception as e:
         st.warning(f"Erro ao carregar o arquivo de parâmetros do usuário: {e}. Criando base vazia.")
         logger.warning(f"Erro ao carregar o arquivo de parâmetros do usuário: {e}. Criando base vazia.")
-        df_grupos_usuario = pd.DataFrame(columns=colunas_base_parametros)
+        # df_grupos_usuario já está inicializado como vazio e tipado corretamente
 else:
     st.info("Arquivo de parâmetros do usuário não encontrado. Comece a adicionar suas regras abaixo.")
     logger.info("Arquivo de parâmetros do usuário não encontrado. Criando base vazia.")
@@ -85,13 +123,13 @@ column_configuration = {
         "Substituta",
         help="Filial que irá substituir a coleta",
         options=lista_filiais,
-        required=True, # Define como campo obrigatório
+        required=True,
     ),
     "Inicial": st.column_config.SelectboxColumn(
         "Inicial",
         help="Filial de origem da coleta a ser substituída (opcional)",
         options=lista_filiais,
-        required=False, # Não é obrigatório
+        required=False,
     ),
     "Recebe": st.column_config.SelectboxColumn(
         "Recebe",
@@ -99,13 +137,14 @@ column_configuration = {
         options=['', 'S', 'N'],
         required=True,
     ),
-    "UF": st.column_config.TextColumn(
+    "UF": st.column_config.TextColumn( # Permite entrada de texto livre para UF
         "UF",
         help="Estado da coleta (Ex: SP, MG)",
         width="small",
         required=True,
+        max_chars=2, # Geralmente UF tem 2 caracteres
     ),
-    "Grupo Economico": st.column_config.TextColumn(
+    "Grupo Economico": st.column_config.TextColumn( # Mantido como texto, pois pode ser código ou nome
         "Grupo Econômico",
         help="Código ou nome do grupo econômico (opcional)",
     ),
@@ -113,11 +152,13 @@ column_configuration = {
         "Modalidade",
         help="Modalidade de transporte (FCA/EXW) (opcional)",
         options=['', 'FCA', 'EXW'],
+        required=False,
     ),
     "Tipo de carga": st.column_config.SelectboxColumn(
         "Tipo de carga",
         help="Tipo de carga (Fracionado/Lotação) (opcional)",
         options=['', 'Fracionado', 'Lotação'],
+        required=False,
     ),
 }
 
@@ -127,17 +168,33 @@ df_grupos_usuario_editado = st.data_editor(
     num_rows="dynamic",
     use_container_width=True,
     key="regras_usuario_editadas",
-    column_config=column_configuration, # Aplica as configurações de coluna
-    hide_index=True # Oculta o índice numérico
+    column_config=column_configuration,
+    hide_index=True
 )
 
 # === BOTÃO PARA SALVAR AS ALTERAÇÕES DO USUÁRIO ===
 if st.button("💾 Salvar minhas Regras (Usuário)"):
     try:
         # Remover linhas completamente vazias que o data_editor pode criar
-        # E também remover linhas onde 'Substituta' está vazio, que é obrigatório
-        df_to_save = df_grupos_usuario_editado.dropna(how='all')
-        df_to_save = df_to_save[df_to_save['Substituta'].astype(bool)] # Garante que 'Substituta' não é vazio
+        # E também remover linhas onde 'Substituta' está vazio ou 'Recebe'/'UF' estão vazios
+        df_to_save = df_grupos_usuario_editado.copy()
+        
+        # Converte para string para garantir que fillna('') funcione corretamente em todas as colunas
+        for col in colunas_base_parametros.keys():
+            if col in df_to_save.columns:
+                df_to_save[col] = df_to_save[col].astype(str).replace(r'^\s*$', '', regex=True) # Trata espaços em branco como vazio
+
+        # Remove linhas onde todas as colunas estão vazias
+        df_to_save.replace('', pd.NA, inplace=True) # Temporariamente substitui '' por NA para dropna
+        df_to_save = df_to_save.dropna(how='all')
+        df_to_save.replace(pd.NA, '', inplace=True) # Volta NA para '' para salvar
+
+        # Valida colunas obrigatórias após limpeza
+        df_to_save = df_to_save[
+            (df_to_save['Substituta'].astype(bool)) &
+            (df_to_save['Recebe'].astype(bool)) &
+            (df_to_save['UF'].astype(bool))
+        ]
 
         if not df_to_save.empty:
             df_to_save.to_excel(CAMINHO_PARAMETETROS_USUARIO, index=False)
@@ -146,10 +203,7 @@ if st.button("💾 Salvar minhas Regras (Usuário)"):
             logger.info("Regras do usuário salvas com sucesso.")
             st.experimental_rerun()
         else:
-            if not df_grupos_usuario_editado.empty and not df_grupos_usuario_editado['Substituta'].astype(bool).any():
-                 st.error("❌ Nenhuma regra válida para salvar. A coluna 'Substituta' é obrigatória e não pode estar vazia.")
-            else:
-                 st.warning("Nenhuma regra para salvar (tabela vazia ou apenas linhas vazias).")
+            st.error("❌ Nenhuma regra válida para salvar. As colunas 'Substituta', 'Recebe' e 'UF' são obrigatórias e não podem estar vazias.")
 
     except Exception as e:
         st.error(f"❌ Erro ao salvar suas regras: {e}")
@@ -162,18 +216,29 @@ if st.button("🚀 Rodar Roteirização"):
     log_stream.seek(0)
     log_stream.truncate(0)
 
-    df_grupos_final = pd.concat([df_padrao_parametros, df_grupos_usuario_editado.dropna(how='all')], ignore_index=True)
+    # Concatena as bases padrão e do usuário para o processamento
+    # Garante que as colunas do df_grupos_usuario_editado sejam do tipo string para concatenação segura
+    df_usuario_processed = df_grupos_usuario_editado.copy()
+    for col in colunas_base_parametros.keys():
+        if col in df_usuario_processed.columns:
+            df_usuario_processed[col] = df_usuario_processed[col].astype(str).replace(r'^\s*$', '', regex=True)
+            
+    df_grupos_final = pd.concat([df_padrao_parametros, df_usuario_processed.dropna(how='all')], ignore_index=True)
     logger.info("Bases de parâmetros padrão e do usuário concatenadas para processamento.")
 
-    # Adicionar validação mínima para as regras finais antes de processar
     if df_grupos_final.empty:
         st.error("Por favor, preencha os parâmetros contratuais (padrão ou do usuário) antes de processar.")
         logger.error("Tentativa de roteirização com base de parâmetros vazia.")
-        st.stop() # Interrompe para evitar processamento inútil
+        st.stop()
     
     # Validação adicional das colunas obrigatórias nas regras finais
     # Garante que 'Substituta', 'Recebe', 'UF' não sejam vazios nas regras que serão usadas
     df_grupos_final_validado = df_grupos_final.dropna(subset=['Substituta', 'Recebe', 'UF'])
+    
+    # IMPORTANTE: replace de strings vazias para NaN para que dropna funcione para SelectboxColumn
+    df_grupos_final_validado = df_grupos_final_validado.replace('', pd.NA)
+    df_grupos_final_validado = df_grupos_final_validado.dropna(subset=['Substituta', 'Recebe', 'UF']) # Repete dropna após replace
+    df_grupos_final_validado = df_grupos_final_validado.fillna('') # Volta NaN para string vazia para o restante do código
 
     if df_grupos_final_validado.empty:
         st.error("A base de parâmetros final não contém regras válidas. Certifique-se de que 'Substituta', 'Recebe' e 'UF' não estejam vazios.")
@@ -192,12 +257,13 @@ if st.button("🚀 Rodar Roteirização"):
         ]
 
         def buscar_regras_substituicao(df_regras, uf, modalidade, tipo_carga):
+            # Garante que UF, Modalidade e Tipo de carga são tratados como string para comparação
             regras = df_regras[(df_regras['UF'] == uf) & (df_regras['Recebe'] == 'S')]
             regras = regras[
-                (regras['Modalidade'].isna() | (regras['Modalidade'] == modalidade)) &
-                (regras['Tipo de carga'].isna() | (regras['Tipo de carga'] == tipo_carga))
+                (regras['Modalidade'].isin(['', modalidade, None])) & # Inclui vazio, None e o valor da modalidade
+                (regras['Tipo de carga'].isin(['', tipo_carga, None]))
             ]
-            return regras
+            return regras.copy() # Retorna uma cópia para evitar SettingWithCopyWarning
 
         municipios = df_dist['MunicipioOrigem'].unique()
         total_municipios = len(municipios)
@@ -211,23 +277,26 @@ if st.button("🚀 Rodar Roteirização"):
                     filial_encontrada = False
 
                     # Prioridade 1: Regras de Substituição (base final concatenada)
-                    # Usar df_grupos_final_validado aqui
                     regras_subs = buscar_regras_substituicao(df_grupos_final_validado, uf_municipio, incoterm, tipo_carga)
                     if not regras_subs.empty:
                         regra = regras_subs.iloc[0]
+                        # Converte 'Grupo Economico' para str antes de verificar pd.notna
+                        grupo_economico_str = str(regra['Grupo Economico']) if pd.notna(regra['Grupo Economico']) and str(regra['Grupo Economico']).strip() != '' else None
+                        
                         try:
-                            cod_filial_subs = df_filiais[df_filiais['Filial'] == regra['Substituta']]['Codigo'].iloc[0]
+                            # Garante que a filial seja string antes de comparar
+                            cod_filial_subs = df_filiais[df_filiais['Filial'].astype(str) == str(regra['Substituta'])]['Codigo'].iloc[0]
                             logger.info(f"Regra de substituição aplicada para {municipio} ({incoterm}/{tipo_carga}): Filial {regra['Substituta']} (Código: {int(cod_filial_subs):04}).")
                         except IndexError:
                             logger.warning(f"Código não encontrado para filial substituta {regra['Substituta']} para {municipio} ({incoterm}/{tipo_carga}). Usando '0000'.")
                             cod_filial_subs = '0000'
 
                         descricao_regra = (
-                            f"Regra de Substituição: {regra['Substituta']} recebe coletas de {regra['Grupo Economico']} "
-                            f"({regra['Modalidade'] if pd.notna(regra['Modalidade']) else 'Todas'}, "
-                            f"{regra['Tipo de carga'] if pd.notna(regra['Tipo de carga']) else 'Todos'})"
+                            f"Regra de Substituição: {regra['Substituta']} recebe coletas de {grupo_economico_str if grupo_economico_str else 'N/A'} "
+                            f"({regra['Modalidade'] if pd.notna(regra['Modalidade']) and str(regra['Modalidade']).strip() != '' else 'Todas'}, "
+                            f"{regra['Tipo de carga'] if pd.notna(regra['Tipo de carga']) and str(regra['Tipo de carga']).strip() != '' else 'Todos'})"
                         )
-                        if pd.notna(regra.get('Inicial')) and str(regra['Inicial']).strip():
+                        if pd.notna(regra.get('Inicial')) and str(regra['Inicial']).strip() != '':
                             descricao_regra += f" ao invés de {regra['Inicial']}"
 
                         resultados.append({
@@ -238,7 +307,7 @@ if st.button("🚀 Rodar Roteirização"):
                             'Codigo_Filial': f"{int(cod_filial_subs):04}",
                             'KM_ID': None,
                             'Condicao_Atribuicao': descricao_regra,
-                            'GRUPO ECONOMICO': f"{int(regra['Grupo Economico']):04}" if pd.notna(regra['Grupo Economico']) else None
+                            'GRUPO ECONOMICO': f"{int(float(grupo_economico_str)):04}" if grupo_economico_str and str(grupo_economico_str).replace('.', '', 1).isdigit() else None
                         })
                         filial_encontrada = True
 
@@ -340,31 +409,26 @@ if st.button("🚀 Rodar Roteirização"):
                         'GRUPO ECONOMICO': None
                     })
             
-            # Atualizar barra de progresso
             percent_complete = min(100, int((i + 1) / total_municipios * 100))
             my_bar.progress(percent_complete, text=f"{progress_text} {percent_complete}% Concluído.")
             
-        # Finaliza a barra de progresso em 100%
         my_bar.progress(100, text=f"{progress_text} 100% Concluído.")
 
         df_resultado = pd.DataFrame(resultados)
         
-        # === EXPORTAR RESULTADO E LOG EM ARQUIVO ZIP ===
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-            # Adicionar o Excel ao ZIP
             excel_buffer = BytesIO()
             df_resultado.to_excel(excel_buffer, index=False)
             excel_buffer.seek(0)
             zf.writestr("resultado_roteirizacao.xlsx", excel_buffer.getvalue())
             logger.info("Resultado da roteirização adicionado ao ZIP.")
 
-            # Adicionar o Log ao ZIP
             log_content = log_stream.getvalue()
             zf.writestr("log_roteirizacao.log", log_content)
             logger.info("Log da roteirização adicionado ao ZIP.")
         
-        zip_buffer.seek(0) # Retorna ao início do buffer para download
+        zip_buffer.seek(0)
 
         st.success("✅ Processamento concluído!")
         st.dataframe(df_resultado)
